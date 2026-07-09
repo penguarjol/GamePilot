@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useInvoke } from "../hooks/useInvoke";
 import type { HardwareInfo, ProcessInfo, JavaInstallation } from "../types";
 
@@ -81,6 +82,18 @@ export function Diagnostics() {
                   <dd>{hw.data.gpu_vram_mb} MB</dd>
                 </>
               )}
+              {hw.data.gpu_driver_version && (
+                <>
+                  <dt>GPU Driver</dt>
+                  <dd>{hw.data.gpu_driver_version}</dd>
+                </>
+              )}
+              {hw.data.cpu_freq_mhz > 0 && (
+                <>
+                  <dt>CPU Frequency</dt>
+                  <dd>{(hw.data.cpu_freq_mhz / 1000).toFixed(2)} GHz</dd>
+                </>
+              )}
             </dl>
           ) : hw.error ? (
             <div className="error-state">{hw.error}</div>
@@ -122,6 +135,45 @@ export function Diagnostics() {
         </div>
       </div>
 
+      {hw.data && hw.data.disks.length > 0 && (
+        <div className="card" style={{ marginTop: "var(--space-lg)" }}>
+          <h3 className="card-title">Disks</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Mount</th>
+                <th>Total (GB)</th>
+                <th>Free (GB)</th>
+                <th>Used %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hw.data.disks.map((d, i) => {
+                const usedPercent = d.total_gb > 0 ? Math.round(((d.total_gb - d.free_gb) / d.total_gb) * 100) : 0;
+                return (
+                  <tr key={i} className={d.free_gb < 10 ? "row-hog" : ""}>
+                    <td>{d.name || "-"}</td>
+                    <td className="mono">{d.mount_point}</td>
+                    <td>{d.total_gb.toFixed(1)}</td>
+                    <td className={d.free_gb < 10 ? "text-warn" : ""}>{d.free_gb.toFixed(1)}</td>
+                    <td>
+                      <div className="bar-container">
+                        <div
+                          className={`bar-fill${usedPercent > 90 ? " bar-warn" : ""}`}
+                          style={{ width: `${usedPercent}%` }}
+                        />
+                        <span className="bar-label">{usedPercent}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       <div className="card" style={{ marginTop: "var(--space-lg)" }}>
         <h3 className="card-title">
           Processes
@@ -141,6 +193,7 @@ export function Diagnostics() {
                   <th>Category</th>
                   <th>Status</th>
                   <th>Recommendation</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -163,6 +216,18 @@ export function Diagnostics() {
                       )}
                     </td>
                     <td>{p.recommendation || "-"}</td>
+                    <td>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => invoke("add_ignore_rule", {
+                          ruleType: "process",
+                          pattern: p.name,
+                          reason: "Ignored from diagnostics",
+                        })}
+                      >
+                        Always ignore
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

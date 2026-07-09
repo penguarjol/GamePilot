@@ -7,6 +7,7 @@ import type {
   Recommendation,
   Session,
   SavedInstance,
+  SelfMetrics,
 } from "../types";
 
 export function Dashboard() {
@@ -16,11 +17,13 @@ export function Dashboard() {
   const sessions = useInvoke<Session[]>("get_sessions");
   const saved = useInvoke<SavedInstance[]>("get_saved_instances");
   const recs = useInvoke<Recommendation[]>("get_recommendations");
+  const selfMetrics = useInvoke<SelfMetrics>("get_self_metrics");
 
   useEffect(() => {
     launchers.execute();
     sessions.execute();
     saved.execute();
+    selfMetrics.execute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -46,6 +49,7 @@ export function Dashboard() {
   const ramUsedPercent = hw.data
     ? Math.round((hw.data.ram_used_mb / hw.data.ram_total_mb) * 100)
     : 0;
+  const lowDisks = hw.data?.disks.filter((d) => d.free_gb < 10) ?? [];
 
   return (
     <div className="view-content">
@@ -82,6 +86,12 @@ export function Dashboard() {
                 <span className="hw-label">CPU Usage</span>
                 <span className="hw-value">{hw.data.cpu_usage_percent.toFixed(1)}%</span>
               </div>
+              {hw.data.cpu_freq_mhz > 0 && (
+                <div className="hw-row">
+                  <span className="hw-label">CPU Frequency</span>
+                  <span className="hw-value">{(hw.data.cpu_freq_mhz / 1000).toFixed(2)} GHz</span>
+                </div>
+              )}
               <div className="hw-row">
                 <span className="hw-label">RAM</span>
                 <span className="hw-value">
@@ -233,6 +243,25 @@ export function Dashboard() {
           )}
         </div>
       </div>
+
+      {lowDisks.length > 0 && (
+        <div className="disk-warning-banner">
+          <strong>Low disk space:</strong>
+          {lowDisks.map((d) => (
+            <span key={d.mount_point} className="disk-warning-item">
+              {d.name || d.mount_point} — {d.free_gb.toFixed(1)} GB free
+            </span>
+          ))}
+        </div>
+      )}
+
+      {selfMetrics.data && (
+        <div className="self-metrics-footer">
+          <span className="self-metrics-label">GamePilot</span>
+          <span className="self-metrics-stat">CPU: {selfMetrics.data.cpu_percent.toFixed(1)}%</span>
+          <span className="self-metrics-stat">RAM: {selfMetrics.data.ram_mb.toFixed(0)} MB</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,6 @@
+renderDistance:16
+simulationDistance:12
+maxFps:260
+graphicsMode:fancy
+enableVsync:false
+guiScale:3

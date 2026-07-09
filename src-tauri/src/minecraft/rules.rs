@@ -4,7 +4,7 @@ use crate::hardware::HardwareInfo;
 use crate::minecraft::instance::MinecraftInstance;
 use crate::minecraft::mods::ModAnalysis;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Recommendation {
     pub id: String,
     pub category: String,

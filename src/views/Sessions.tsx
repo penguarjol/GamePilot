@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useInvoke } from "../hooks/useInvoke";
-import type { Session, SessionReport } from "../types";
+import type { Session, SessionReport, TelemetrySample } from "../types";
 
 export function Sessions() {
   const sessions = useInvoke<Session[]>("get_sessions");
@@ -9,11 +9,47 @@ export function Sessions() {
   const [report, setReport] = useState<SessionReport | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [telemetry, setTelemetry] = useState<TelemetrySample | null>(null);
+  const [gameRunning, setGameRunning] = useState<boolean | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     sessions.execute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const hasActiveSession = sessions.data?.some((s) => s.status === "active") ?? false;
+
+  useEffect(() => {
+    if (hasActiveSession) {
+      const poll = async () => {
+        try {
+          const sample = await invoke<TelemetrySample>("get_telemetry_sample");
+          setTelemetry(sample);
+        } catch { /* ignore polling errors */ }
+        try {
+          const running = await invoke<boolean>("is_game_running", { processName: "java" });
+          setGameRunning(running);
+          if (!running) {
+            const active = sessions.data?.find((s) => s.status === "active");
+            if (active) {
+              await invoke<Session>("end_session", { sessionId: active.id });
+              await sessions.execute();
+            }
+          }
+        } catch { /* ignore */ }
+      };
+      poll();
+      pollRef.current = setInterval(poll, 5000);
+    } else {
+      setTelemetry(null);
+      setGameRunning(null);
+    }
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveSession]);
 
   const selectSession = async (session: Session) => {
     setSelectedSession(session);
@@ -59,6 +95,45 @@ export function Sessions() {
       </div>
 
       <div className="sessions-layout">
+        {hasActiveSession && (
+          <div className="telemetry-live-bar card">
+            <div className="telemetry-header">
+              <span className="badge badge-success">LIVE</span>
+              {gameRunning !== null && (
+                <span className={`badge badge-${gameRunning ? "success" : "warning"}`}>
+                  {gameRunning ? "Game Running" : "Game Stopped"}
+                </span>
+              )}
+            </div>
+            {telemetry && (
+              <div className="telemetry-stats">
+                <div className="telemetry-stat">
+                  <span className="telemetry-stat-label">CPU</span>
+                  <span className="telemetry-stat-value">{telemetry.cpu_percent.toFixed(1)}%</span>
+                </div>
+                <div className="telemetry-stat">
+                  <span className="telemetry-stat-label">RAM Used</span>
+                  <span className="telemetry-stat-value">{telemetry.ram_used_mb.toFixed(0)} MB</span>
+                </div>
+                <div className="telemetry-stat">
+                  <span className="telemetry-stat-label">RAM Free</span>
+                  <span className="telemetry-stat-value">{telemetry.ram_available_mb.toFixed(0)} MB</span>
+                </div>
+                {telemetry.top_processes.length > 0 && (
+                  <div className="telemetry-procs">
+                    <span className="telemetry-stat-label">Top:</span>
+                    {telemetry.top_processes.slice(0, 3).map((p) => (
+                      <span key={p.pid} className="telemetry-proc">
+                        {p.name} ({p.cpu_percent.toFixed(0)}% / {p.ram_mb.toFixed(0)}MB)
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="sessions-list-panel">
           {sessions.loading ? (
             <div className="loading-center"><span className="spinner" /></div>

@@ -145,11 +145,14 @@ fn test_recommendations_generation() {
         cpu_cores: 8,
         cpu_threads: 16,
         cpu_usage_percent: 25.0,
+        cpu_freq_mhz: 4500,
         ram_total_mb: 16384,
         ram_used_mb: 8192,
         ram_available_mb: 8192,
         gpu_model: "Test GPU".to_string(),
         gpu_vram_mb: 8192,
+        gpu_driver_version: "31.0.15.5000".to_string(),
+        disks: vec![],
         os_name: "Windows".to_string(),
         os_version: "11".to_string(),
         hostname: "test-pc".to_string(),
@@ -204,4 +207,44 @@ fn test_database_operations() {
         )
         .unwrap();
     assert_eq!(count, 1);
+}
+
+#[test]
+fn test_config_analysis() {
+    let path = fixtures_dir().join("manual-folder");
+    let analysis = gamepilot_app_lib::minecraft::config::analyze_configs(&path, 150);
+
+    assert!(analysis.options.is_some(), "Should parse options.txt");
+    let opts = analysis.options.unwrap();
+    assert_eq!(opts.render_distance, Some(16));
+    assert_eq!(opts.simulation_distance, Some(12));
+    assert_eq!(opts.max_framerate, Some(260));
+
+    assert!(analysis.server_properties.is_some(), "Should parse server.properties");
+    let sp = analysis.server_properties.unwrap();
+    assert_eq!(sp.view_distance, Some(16));
+    assert_eq!(sp.simulation_distance, Some(12));
+
+    assert!(
+        analysis.recommendations.len() >= 3,
+        "Should generate config recommendations for heavy pack with high distances, got {}",
+        analysis.recommendations.len()
+    );
+}
+
+#[test]
+fn test_modpack_health_scoring() {
+    let mods_path = fixtures_dir()
+        .join("prism-instance")
+        .join(".minecraft")
+        .join("mods");
+    let analysis = gamepilot_app_lib::minecraft::mods::analyze_mods(&mods_path, Some("NeoForge"));
+    let health = gamepilot_app_lib::minecraft::health::score_modpack_health(&analysis, false);
+
+    assert!(health.overall_score > 0 && health.overall_score <= 100);
+    assert!(!health.summary.is_empty());
+    assert!(!health.memory_risk.label.is_empty());
+    assert!(!health.rendering_risk.label.is_empty());
+    assert!(!health.startup_risk.label.is_empty());
+    assert!(!health.optimization_score.label.is_empty());
 }

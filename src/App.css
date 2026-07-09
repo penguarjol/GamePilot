@@ -751,3 +751,340 @@ kbd {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
 }
+
+/* Self-metrics footer */
+.self-metrics-footer {
+  position: fixed;
+  bottom: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  padding: var(--space-xs) var(--space-lg);
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-xs);
+  z-index: 100;
+}
+
+.self-metrics-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.self-metrics-stat {
+  color: var(--text-secondary);
+}
+
+/* Disk warning banner */
+.disk-warning-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  margin-top: var(--space-lg);
+  background: var(--warning-muted);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  font-size: var(--font-sm);
+  color: var(--warning);
+}
+
+.disk-warning-item {
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+/* Health score card */
+.health-score-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.health-overall {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+}
+
+.health-overall-score {
+  font-size: var(--font-2xl);
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.health-overall-label {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+.health-summary {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.health-risks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.health-risk-row {
+  display: grid;
+  grid-template-columns: 100px 1fr 40px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.health-risk-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.health-bar-container {
+  height: 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.health-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.health-bar-good {
+  background: var(--success);
+}
+
+.health-bar-warn {
+  background: var(--warning);
+}
+
+.health-bar-bad {
+  background: var(--error);
+}
+
+.health-risk-value {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* Config recommendation cards */
+.config-rec-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.config-rec-card {
+  padding: var(--space-md);
+}
+
+.config-rec-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+
+.config-rec-body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--font-sm);
+  margin-bottom: var(--space-xs);
+}
+
+.config-rec-key {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.config-rec-change {
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.config-rec-reason {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.config-rec-impact {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Status badges for recommendations */
+.badge-status-new { background: var(--info-muted); color: var(--info); }
+.badge-status-applied { background: var(--success-muted); color: var(--success); }
+.badge-status-ignored { background: var(--bg-tertiary); color: var(--text-muted); }
+.badge-status-deferred { background: var(--warning-muted); color: var(--warning); }
+.badge-status-accepted { background: var(--success-muted); color: var(--success); }
+
+/* Status filter buttons */
+.status-filter-btns {
+  display: flex;
+  gap: 4px;
+}
+
+/* Recommendation status actions row */
+.rec-status-actions {
+  display: flex;
+  gap: var(--space-sm);
+  padding-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* Telemetry live bar */
+.telemetry-live-bar {
+  grid-column: 1 / -1;
+  margin-bottom: var(--space-md);
+}
+
+.telemetry-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.telemetry-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  align-items: center;
+}
+
+.telemetry-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.telemetry-stat-label {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+}
+
+.telemetry-stat-value {
+  font-size: var(--font-md);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.telemetry-procs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.telemetry-proc {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+/* Settings onboarding overlay */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 1000;
+}
+
+.onboarding-modal {
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  padding: var(--space-2xl);
+}
+
+.onboarding-modal h2 {
+  font-size: var(--font-xl);
+  font-weight: 600;
+}
+
+.onboarding-modal p {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.onboarding-points {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+}
+
+.onboarding-points li::before {
+  content: "\2022 ";
+  color: var(--accent);
+}
+
+/* Danger card variant */
+.card-danger {
+  border-color: var(--error);
+}
+
+.setting-note {
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Light theme */
+body.light-theme {
+  --bg-primary: #f8f9fc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f0f2f5;
+  --bg-elevated: #e8eaed;
+
+  --text-primary: #1a1f2e;
+  --text-secondary: #4b5563;
+  --text-muted: #9ca3af;
+
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-muted: rgba(5, 150, 105, 0.12);
+
+  --border: #e5e7eb;
+  --border-subtle: #f3f4f6;
+
+  --warning-muted: rgba(245, 166, 35, 0.1);
+  --error-muted: rgba(239, 68, 68, 0.1);
+  --info-muted: rgba(59, 130, 246, 0.1);
+  --success-muted: rgba(16, 185, 129, 0.1);
+}
+
+body.light-theme .btn-primary {
+  color: #ffffff;
+}
+
+body.light-theme ::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+
+body.light-theme ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

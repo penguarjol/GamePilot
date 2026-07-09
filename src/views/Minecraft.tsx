@@ -9,6 +9,8 @@ import type {
   ModAnalysis,
   Recommendation,
   LaunchResult,
+  ConfigAnalysis,
+  ModpackHealth,
 } from "../types";
 
 export function Minecraft() {
@@ -17,6 +19,8 @@ export function Minecraft() {
   const [selectedInstance, setSelectedInstance] = useState<MinecraftInstance | null>(null);
   const [modAnalysis, setModAnalysis] = useState<ModAnalysis | null>(null);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [configAnalysis, setConfigAnalysis] = useState<ConfigAnalysis | null>(null);
+  const [modpackHealth, setModpackHealth] = useState<ModpackHealth | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [launchResult, setLaunchResult] = useState<LaunchResult | null>(null);
@@ -52,6 +56,8 @@ export function Minecraft() {
     setError(null);
     setModAnalysis(null);
     setRecommendations([]);
+    setConfigAnalysis(null);
+    setModpackHealth(null);
     setLaunchResult(null);
     setLoading("Scanning instance...");
     try {
@@ -78,6 +84,20 @@ export function Minecraft() {
           loader: selectedInstance.loader_type,
         });
         setModAnalysis(analysis);
+
+        const health = await invoke<ModpackHealth>("get_modpack_health", {
+          modsPath: selectedInstance.mods_path,
+          loader: selectedInstance.loader_type,
+          hasConfigIssues: false,
+        });
+        setModpackHealth(health);
+      }
+      if (selectedInstance.path) {
+        const config = await invoke<ConfigAnalysis>("analyze_configs", {
+          instancePath: selectedInstance.path,
+          modCount: selectedInstance.mod_count,
+        });
+        setConfigAnalysis(config);
       }
       const recs = await invoke<Recommendation[]>("get_recommendations", {
         instanceJson: JSON.stringify(selectedInstance),
@@ -270,6 +290,63 @@ export function Minecraft() {
                 </div>
               )}
 
+              {modpackHealth && (
+                <div className="detail-section">
+                  <h4>Modpack Health</h4>
+                  <div className="health-score-card card">
+                    <div className="health-overall">
+                      <span className="health-overall-score">{modpackHealth.overall_score}</span>
+                      <span className="health-overall-label">/ 100</span>
+                    </div>
+                    <p className="health-summary">{modpackHealth.summary}</p>
+                    <div className="health-risks">
+                      {([
+                        { label: "Memory", risk: modpackHealth.memory_risk },
+                        { label: "Rendering", risk: modpackHealth.rendering_risk },
+                        { label: "Startup", risk: modpackHealth.startup_risk },
+                        { label: "Dependency", risk: modpackHealth.dependency_risk },
+                        { label: "Optimization", risk: modpackHealth.optimization_score },
+                      ] as const).map(({ label, risk }) => (
+                        <div key={label} className="health-risk-row">
+                          <span className="health-risk-label">{label}</span>
+                          <div className="health-bar-container">
+                            <div
+                              className={`health-bar-fill health-bar-${risk.score >= 70 ? "good" : risk.score >= 40 ? "warn" : "bad"}`}
+                              style={{ width: `${risk.score}%` }}
+                            />
+                          </div>
+                          <span className="health-risk-value">{risk.score}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {configAnalysis && configAnalysis.recommendations.length > 0 && (
+                <div className="detail-section">
+                  <h4>Config Recommendations</h4>
+                  <ul className="config-rec-list">
+                    {configAnalysis.recommendations.map((cr, i) => (
+                      <li key={i} className="config-rec-card card">
+                        <div className="config-rec-header">
+                          <span className="mono">{cr.file}</span>
+                          <span className={`badge badge-${cr.confidence}`}>{cr.confidence}</span>
+                        </div>
+                        <div className="config-rec-body">
+                          <span className="config-rec-key">{cr.key}:</span>
+                          <span className="config-rec-change">
+                            {cr.current_value} → {cr.recommended_value}
+                          </span>
+                        </div>
+                        <div className="config-rec-reason">{cr.reason}</div>
+                        <div className="config-rec-impact">Impact: {cr.impact}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {recommendations.length > 0 && (
                 <div className="detail-section">
                   <h4>Recommendations</h4>
@@ -286,16 +363,36 @@ export function Minecraft() {
                         <div className="rec-title">{r.title}</div>
                         <div className="rec-desc">{r.description}</div>
                         <div className="rec-evidence">{r.evidence}</div>
-                        {r.action_type === "open_link" && r.action_data && (
-                          <a
-                            href={r.action_data}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-secondary btn-sm"
+                        <div className="rec-status-actions">
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "accepted" })}
                           >
-                            Open Link
-                          </a>
-                        )}
+                            Accept
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "ignored" })}
+                          >
+                            Ignore
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "deferred" })}
+                          >
+                            Defer
+                          </button>
+                          {r.action_type === "open_link" && r.action_data && (
+                            <a
+                              href={r.action_data}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn btn-secondary btn-sm"
+                            >
+                              Open Link
+                            </a>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>

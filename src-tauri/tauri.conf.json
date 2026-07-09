@@ -42,10 +42,5 @@
       }
     }
   },
-  "plugins": {
-    "opener": {
-      "openUrl": true,
-      "revealItemInDir": true
-    }
-  }
+  "plugins": {}
 }

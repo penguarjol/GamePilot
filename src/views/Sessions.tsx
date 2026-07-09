@@ -1,7 +1,18 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useInvoke } from "../hooks/useInvoke";
-import type { Session, SessionReport, TelemetrySample } from "../types";
+import { useInvoke } from "@/hooks/useInvoke";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import type { Session, SessionReport, TelemetrySample } from "@/types";
 
 export function Sessions() {
   const sessions = useInvoke<Session[]>("get_sessions");
@@ -30,7 +41,7 @@ export function Sessions() {
           setTelemetry(sample);
           samplesRef.current.cpu.push(sample.cpu_percent);
           samplesRef.current.ram.push(sample.ram_used_mb);
-        } catch { /* ignore polling errors */ }
+        } catch { /* polling errors are non-fatal */ }
         try {
           const running = await invoke<boolean>("is_game_running", { processName: "java" });
           setGameRunning(running);
@@ -98,171 +109,182 @@ export function Sessions() {
   };
 
   return (
-    <div className="view-content">
-      <div className="view-header">
-        <h1>Sessions</h1>
-        <button
-          className="btn btn-secondary"
-          onClick={() => sessions.execute()}
-          disabled={sessions.loading}
-        >
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">Sessions</h1>
+        <Button variant="secondary" onClick={() => sessions.execute()} disabled={sessions.loading}>
           Refresh
-        </button>
+        </Button>
       </div>
 
-      <div className="sessions-layout">
-        {hasActiveSession && (
-          <div className="telemetry-live-bar card">
-            <div className="telemetry-header">
-              <span className="badge badge-success">LIVE</span>
+      {/* Live telemetry bar */}
+      {hasActiveSession && (
+        <Card className="border-primary/50">
+          <CardContent className="py-3">
+            <div className="flex items-center gap-4 flex-wrap">
+              <Badge>LIVE</Badge>
               {gameRunning !== null && (
-                <span className={`badge badge-${gameRunning ? "success" : "warning"}`}>
+                <Badge variant={gameRunning ? "default" : "destructive"}>
                   {gameRunning ? "Game Running" : "Game Stopped"}
-                </span>
+                </Badge>
+              )}
+              {telemetry && (
+                <>
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">CPU </span>
+                    <span className="font-medium">{telemetry.cpu_percent.toFixed(1)}%</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">RAM </span>
+                    <span className="font-medium">{telemetry.ram_used_mb.toFixed(0)} MB</span>
+                  </div>
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Free </span>
+                    <span className="font-medium">{telemetry.ram_available_mb.toFixed(0)} MB</span>
+                  </div>
+                  {telemetry.top_processes.length > 0 && (
+                    <div className="text-xs text-muted-foreground ml-auto">
+                      Top: {telemetry.top_processes.slice(0, 3).map((p) =>
+                        `${p.name} (${p.cpu_percent.toFixed(0)}%)`
+                      ).join(", ")}
+                    </div>
+                  )}
+                </>
               )}
             </div>
-            {telemetry && (
-              <div className="telemetry-stats">
-                <div className="telemetry-stat">
-                  <span className="telemetry-stat-label">CPU</span>
-                  <span className="telemetry-stat-value">{telemetry.cpu_percent.toFixed(1)}%</span>
-                </div>
-                <div className="telemetry-stat">
-                  <span className="telemetry-stat-label">RAM Used</span>
-                  <span className="telemetry-stat-value">{telemetry.ram_used_mb.toFixed(0)} MB</span>
-                </div>
-                <div className="telemetry-stat">
-                  <span className="telemetry-stat-label">RAM Free</span>
-                  <span className="telemetry-stat-value">{telemetry.ram_available_mb.toFixed(0)} MB</span>
-                </div>
-                {telemetry.top_processes.length > 0 && (
-                  <div className="telemetry-procs">
-                    <span className="telemetry-stat-label">Top:</span>
-                    {telemetry.top_processes.slice(0, 3).map((p) => (
-                      <span key={p.pid} className="telemetry-proc">
-                        {p.name} ({p.cpu_percent.toFixed(0)}% / {p.ram_mb.toFixed(0)}MB)
-                      </span>
-                    ))}
-                  </div>
-                )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-6">
+        {/* Session list */}
+        <Card>
+          <CardContent className="pt-4">
+            {sessions.loading ? (
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-8 animate-pulse rounded bg-muted" />
+                ))}
+              </div>
+            ) : sessions.data && sessions.data.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Method</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.data.map((s) => (
+                    <TableRow
+                      key={s.id}
+                      className={`cursor-pointer ${selectedSession?.id === s.id ? "bg-muted/50" : ""}`}
+                      onClick={() => selectSession(s)}
+                    >
+                      <TableCell>
+                        <Badge variant={s.status === "active" ? "default" : "secondary"}>
+                          {s.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{formatDate(s.started_at)}</TableCell>
+                      <TableCell>{s.duration_secs != null ? formatDuration(s.duration_secs) : "-"}</TableCell>
+                      <TableCell>{s.launch_method ?? "-"}</TableCell>
+                      <TableCell>
+                        {s.status === "active" && (
+                          <Button
+                            variant="destructive"
+                            size="xs"
+                            onClick={(e) => { e.stopPropagation(); endSession(s); }}
+                          >
+                            End
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
+                <span className="text-3xl mb-2">{"\u25F7"}</span>
+                <p className="text-sm">No sessions recorded</p>
+                <p className="text-xs">Launch a Minecraft instance to start recording</p>
               </div>
             )}
-          </div>
-        )}
+          </CardContent>
+        </Card>
 
-        <div className="sessions-list-panel">
-          {sessions.loading ? (
-            <div className="loading-center"><span className="spinner" /></div>
-          ) : sessions.data && sessions.data.length > 0 ? (
-            <table>
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Started</th>
-                  <th>Duration</th>
-                  <th>Method</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.data.map((s) => (
-                  <tr
-                    key={s.id}
-                    className={`session-row${selectedSession?.id === s.id ? " active" : ""}`}
-                    onClick={() => selectSession(s)}
-                  >
-                    <td>
-                      <span className={`badge badge-${s.status === "active" ? "success" : s.status === "completed" ? "info" : "none"}`}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td>{formatDate(s.started_at)}</td>
-                    <td>{s.duration_secs != null ? formatDuration(s.duration_secs) : "-"}</td>
-                    <td>{s.launch_method ?? "-"}</td>
-                    <td>
-                      {s.status === "active" && (
-                        <button
-                          className="btn btn-danger btn-sm"
-                          onClick={(e) => { e.stopPropagation(); endSession(s); }}
-                        >
-                          End
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u25F7"}</span>
-              <span>No sessions recorded</span>
-              <span className="empty-state-hint">Launch a Minecraft instance to start recording sessions</span>
-            </div>
-          )}
-        </div>
-
+        {/* Session detail */}
         {selectedSession && (
-          <div className="session-detail-panel card">
-            <h3>Session Report</h3>
-            {reportLoading ? (
-              <div className="loading-center"><span className="spinner" /></div>
-            ) : reportError ? (
-              <div className="error-state">{reportError}</div>
-            ) : report ? (
-              <div className="report-content">
-                <dl className="detail-dl">
-                  <dt>Instance ID</dt>
-                  <dd className="mono">{report.session.instance_id}</dd>
-                  <dt>Status</dt>
-                  <dd>
-                    <span className={`badge badge-${report.session.status === "active" ? "success" : "info"}`}>
-                      {report.session.status}
-                    </span>
-                  </dd>
-                  <dt>Started</dt>
-                  <dd>{formatDate(report.session.started_at)}</dd>
-                  {report.session.ended_at && (
-                    <>
-                      <dt>Ended</dt>
-                      <dd>{formatDate(report.session.ended_at)}</dd>
-                    </>
-                  )}
-                  {report.session.duration_secs != null && (
-                    <>
-                      <dt>Duration</dt>
-                      <dd>{formatDuration(report.session.duration_secs)}</dd>
-                    </>
-                  )}
-                  {report.session.cpu_avg_percent != null && (
-                    <>
-                      <dt>Avg CPU</dt>
-                      <dd>{report.session.cpu_avg_percent.toFixed(1)}%</dd>
-                    </>
-                  )}
-                  {report.session.ram_avg_mb != null && (
-                    <>
-                      <dt>Avg RAM</dt>
-                      <dd>{report.session.ram_avg_mb.toFixed(0)} MB</dd>
-                    </>
-                  )}
-                  {report.session.ram_peak_mb != null && (
-                    <>
-                      <dt>Peak RAM</dt>
-                      <dd>{report.session.ram_peak_mb.toFixed(0)} MB</dd>
-                    </>
-                  )}
-                  <dt>Recommendations Applied</dt>
-                  <dd>{report.recommendations_applied}</dd>
-                  <dt>Process Observations</dt>
-                  <dd>{report.process_observations}</dd>
-                </dl>
-                <div className="report-summary">
-                  <strong>Summary:</strong> {report.summary}
+          <Card>
+            <CardHeader>
+              <CardTitle>Session Report</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {reportLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="h-4 animate-pulse rounded bg-muted" />
+                  ))}
                 </div>
-              </div>
-            ) : null}
-          </div>
+              ) : reportError ? (
+                <p className="text-sm text-destructive">{reportError}</p>
+              ) : report ? (
+                <div className="space-y-4">
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                    <dt className="text-muted-foreground">Status</dt>
+                    <dd>
+                      <Badge variant={report.session.status === "active" ? "default" : "secondary"}>
+                        {report.session.status}
+                      </Badge>
+                    </dd>
+                    <dt className="text-muted-foreground">Started</dt>
+                    <dd>{formatDate(report.session.started_at)}</dd>
+                    {report.session.ended_at && (
+                      <>
+                        <dt className="text-muted-foreground">Ended</dt>
+                        <dd>{formatDate(report.session.ended_at)}</dd>
+                      </>
+                    )}
+                    {report.session.duration_secs != null && (
+                      <>
+                        <dt className="text-muted-foreground">Duration</dt>
+                        <dd>{formatDuration(report.session.duration_secs)}</dd>
+                      </>
+                    )}
+                    {report.session.cpu_avg_percent != null && (
+                      <>
+                        <dt className="text-muted-foreground">Avg CPU</dt>
+                        <dd>{report.session.cpu_avg_percent.toFixed(1)}%</dd>
+                      </>
+                    )}
+                    {report.session.ram_avg_mb != null && (
+                      <>
+                        <dt className="text-muted-foreground">Avg RAM</dt>
+                        <dd>{report.session.ram_avg_mb.toFixed(0)} MB</dd>
+                      </>
+                    )}
+                    {report.session.ram_peak_mb != null && (
+                      <>
+                        <dt className="text-muted-foreground">Peak RAM</dt>
+                        <dd>{report.session.ram_peak_mb.toFixed(0)} MB</dd>
+                      </>
+                    )}
+                    <dt className="text-muted-foreground">Recs Applied</dt>
+                    <dd>{report.recommendations_applied}</dd>
+                    <dt className="text-muted-foreground">Observations</dt>
+                    <dd>{report.process_observations}</dd>
+                  </dl>
+                  <div className="border-t border-border pt-3">
+                    <p className="text-sm"><strong>Summary:</strong> {report.summary}</p>
+                  </div>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

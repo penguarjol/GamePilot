@@ -20,96 +20,135 @@ struct AppState {
 // --- Hardware & Process ---
 
 #[tauri::command]
-fn get_hardware_info() -> hardware::HardwareInfo {
-    hardware::collect_hardware_info()
+async fn get_hardware_info() -> Result<hardware::HardwareInfo, String> {
+    tokio::task::spawn_blocking(hardware::collect_hardware_info)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_process_info() -> Vec<hardware::ProcessInfo> {
-    hardware::collect_process_info()
+async fn get_process_info() -> Result<Vec<hardware::ProcessInfo>, String> {
+    tokio::task::spawn_blocking(hardware::collect_process_info)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_telemetry_sample() -> hardware::TelemetrySample {
-    hardware::collect_telemetry_sample()
+async fn get_telemetry_sample() -> Result<hardware::TelemetrySample, String> {
+    tokio::task::spawn_blocking(hardware::collect_telemetry_sample)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_self_metrics() -> hardware::SelfMetrics {
-    hardware::collect_self_metrics()
+async fn get_self_metrics() -> Result<hardware::SelfMetrics, String> {
+    tokio::task::spawn_blocking(hardware::collect_self_metrics)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn is_game_running(process_name: String) -> bool {
-    hardware::is_process_running(&process_name)
+async fn is_game_running(process_name: String) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || hardware::is_process_running(&process_name))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // --- Minecraft Discovery ---
 
 #[tauri::command]
-fn discover_launchers() -> Vec<minecraft::discovery::DiscoveredLauncher> {
-    minecraft::discovery::discover_launchers()
+async fn discover_launchers() -> Result<Vec<minecraft::discovery::DiscoveredLauncher>, String> {
+    tokio::task::spawn_blocking(minecraft::discovery::discover_launchers)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn scan_instance(path: String, launcher: String) -> minecraft::instance::MinecraftInstance {
-    minecraft::instance::parse_instance(std::path::Path::new(&path), &launcher)
+async fn discover_all_instances() -> Result<Vec<minecraft::discovery::DiscoveredInstance>, String> {
+    tokio::task::spawn_blocking(minecraft::discovery::discover_all_instances)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn analyze_mods(
+async fn scan_instance(path: String, launcher: String) -> Result<minecraft::instance::MinecraftInstance, String> {
+    tokio::task::spawn_blocking(move || {
+        minecraft::instance::parse_instance(std::path::Path::new(&path), &launcher)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn analyze_mods(
     mods_path: String,
     loader: Option<String>,
-) -> minecraft::mods::ModAnalysis {
-    minecraft::mods::analyze_mods(
-        std::path::Path::new(&mods_path),
-        loader.as_deref(),
-    )
+) -> Result<minecraft::mods::ModAnalysis, String> {
+    tokio::task::spawn_blocking(move || {
+        minecraft::mods::analyze_mods(
+            std::path::Path::new(&mods_path),
+            loader.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn analyze_configs(
+async fn analyze_configs(
     instance_path: String,
     mod_count: usize,
-) -> minecraft::config::ConfigAnalysis {
-    minecraft::config::analyze_configs(
-        std::path::Path::new(&instance_path),
-        mod_count,
-    )
+) -> Result<minecraft::config::ConfigAnalysis, String> {
+    tokio::task::spawn_blocking(move || {
+        minecraft::config::analyze_configs(
+            std::path::Path::new(&instance_path),
+            mod_count,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_modpack_health(
+async fn get_modpack_health(
     mods_path: String,
     loader: Option<String>,
     has_config_issues: bool,
-) -> minecraft::health::ModpackHealth {
-    let analysis = minecraft::mods::analyze_mods(
-        std::path::Path::new(&mods_path),
-        loader.as_deref(),
-    );
-    minecraft::health::score_modpack_health(&analysis, has_config_issues)
+) -> Result<minecraft::health::ModpackHealth, String> {
+    tokio::task::spawn_blocking(move || {
+        let analysis = minecraft::mods::analyze_mods(
+            std::path::Path::new(&mods_path),
+            loader.as_deref(),
+        );
+        minecraft::health::score_modpack_health(&analysis, has_config_issues)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // --- Recommendations ---
 
 #[tauri::command]
-fn get_recommendations(
+async fn get_recommendations(
     instance_json: String,
-) -> Vec<minecraft::rules::Recommendation> {
-    let instance: minecraft::instance::MinecraftInstance =
-        serde_json::from_str(&instance_json).unwrap_or_else(|_| {
-            minecraft::instance::parse_instance(std::path::Path::new(""), "unknown")
-        });
+) -> Result<Vec<minecraft::rules::Recommendation>, String> {
+    tokio::task::spawn_blocking(move || {
+        let instance: minecraft::instance::MinecraftInstance =
+            serde_json::from_str(&instance_json).unwrap_or_else(|_| {
+                minecraft::instance::parse_instance(std::path::Path::new(""), "unknown")
+            });
 
-    let hw = hardware::collect_hardware_info();
+        let hw = hardware::collect_hardware_info();
 
-    let mod_analysis = instance
-        .mods_path
-        .as_ref()
-        .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
+        let mod_analysis = instance
+            .mods_path
+            .as_ref()
+            .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
 
-    minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref())
+        minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref())
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -160,8 +199,10 @@ fn save_recommendation(
 // --- Java ---
 
 #[tauri::command]
-fn detect_java() -> Vec<platform::JavaInstallation> {
-    platform::detect_java_installations()
+async fn detect_java() -> Result<Vec<platform::JavaInstallation>, String> {
+    tokio::task::spawn_blocking(platform::detect_java_installations)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // --- Launch & Sessions ---
@@ -210,20 +251,24 @@ fn store_session_telemetry(
 }
 
 #[tauri::command]
-fn get_recommendations_for_path(
+async fn get_recommendations_for_path(
     instance_path: String,
     launcher: String,
-) -> Vec<minecraft::rules::Recommendation> {
-    let instance = minecraft::instance::parse_instance(
-        std::path::Path::new(&instance_path),
-        &launcher,
-    );
-    let hw = hardware::collect_hardware_info();
-    let mod_analysis = instance
-        .mods_path
-        .as_ref()
-        .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
-    minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref())
+) -> Result<Vec<minecraft::rules::Recommendation>, String> {
+    tokio::task::spawn_blocking(move || {
+        let instance = minecraft::instance::parse_instance(
+            std::path::Path::new(&instance_path),
+            &launcher,
+        );
+        let hw = hardware::collect_hardware_info();
+        let mod_analysis = instance
+            .mods_path
+            .as_ref()
+            .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
+        minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref())
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -280,6 +325,21 @@ fn rollback_file(
 }
 
 // --- Instance Persistence ---
+
+#[tauri::command]
+fn delete_instance(
+    instance_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().unwrap();
+    let conn = app.db.conn();
+    conn.execute(
+        "DELETE FROM game_instances WHERE id = ?1",
+        rusqlite::params![instance_id],
+    )
+    .map_err(|e| format!("Failed to delete instance: {}", e))?;
+    Ok(())
+}
 
 #[tauri::command]
 fn save_instance(
@@ -484,6 +544,7 @@ pub fn run() {
             get_self_metrics,
             is_game_running,
             discover_launchers,
+            discover_all_instances,
             scan_instance,
             analyze_mods,
             analyze_configs,
@@ -500,6 +561,7 @@ pub fn run() {
             get_session_report,
             backup_file,
             rollback_file,
+            delete_instance,
             save_instance,
             get_saved_instances,
             add_ignore_rule,

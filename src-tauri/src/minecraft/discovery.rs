@@ -2,6 +2,92 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct DiscoveredInstance {
+    pub name: String,
+    pub path: PathBuf,
+    pub launcher: String,
+    pub minecraft_version: Option<String>,
+    pub loader_type: Option<String>,
+    pub mod_count: usize,
+}
+
+pub fn discover_all_instances() -> Vec<DiscoveredInstance> {
+    let launchers = discover_launchers();
+    let mut instances = Vec::new();
+
+    for launcher in &launchers {
+        let instance_paths = discover_instances_in_path(&launcher.path, &launcher.launcher_type);
+        for inst_path in instance_paths {
+            let parsed = super::instance::parse_instance(&inst_path, &launcher.name);
+            instances.push(DiscoveredInstance {
+                name: parsed.name,
+                path: parsed.path,
+                launcher: launcher.name.clone(),
+                minecraft_version: parsed.minecraft_version,
+                loader_type: parsed.loader_type,
+                mod_count: parsed.mod_count,
+            });
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        discover_curseforge_custom_instances(&mut instances);
+    }
+
+    instances
+}
+
+#[cfg(target_os = "windows")]
+fn discover_curseforge_custom_instances(instances: &mut Vec<DiscoveredInstance>) {
+    let candidates = [
+        std::env::var("LOCALAPPDATA").ok().map(|d| PathBuf::from(d).join("CurseForge").join("curseforge.json")),
+        std::env::var("APPDATA").ok().map(|d| PathBuf::from(d).join("CurseForge").join("curseforge.json")),
+    ];
+
+    for maybe_path in candidates.into_iter().flatten() {
+        if !maybe_path.exists() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&maybe_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let json: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let custom_path = json.get("minecraft")
+            .and_then(|m| m.get("instancesPath"))
+            .or_else(|| json.get("instancesPath"))
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+
+        if let Some(custom_dir) = custom_path {
+            if custom_dir.exists() {
+                let paths = discover_instances_in_path(&custom_dir, &LauncherType::CurseForge);
+                for inst_path in paths {
+                    if instances.iter().any(|i| i.path == inst_path) {
+                        continue;
+                    }
+                    let parsed = super::instance::parse_instance(&inst_path, "CurseForge");
+                    instances.push(DiscoveredInstance {
+                        name: parsed.name,
+                        path: parsed.path,
+                        launcher: "CurseForge".to_string(),
+                        minecraft_version: parsed.minecraft_version,
+                        loader_type: parsed.loader_type,
+                        mod_count: parsed.mod_count,
+                    });
+                }
+            }
+        }
+        break;
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DiscoveredLauncher {
     pub name: String,
     pub path: PathBuf,

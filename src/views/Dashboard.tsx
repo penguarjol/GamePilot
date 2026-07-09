@@ -1,5 +1,9 @@
 import { useEffect } from "react";
-import { useInvoke } from "../hooks/useInvoke";
+import { useInvoke } from "@/hooks/useInvoke";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import type {
   HardwareInfo,
   ProcessInfo,
@@ -8,7 +12,11 @@ import type {
   Session,
   SavedInstance,
   SelfMetrics,
-} from "../types";
+} from "@/types";
+
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-muted ${className}`} />;
+}
 
 export function Dashboard() {
   const hw = useInvoke<HardwareInfo>("get_hardware_info");
@@ -46,217 +54,215 @@ export function Dashboard() {
   const ramUsedPercent = hw.data
     ? Math.round((hw.data.ram_used_mb / hw.data.ram_total_mb) * 100)
     : 0;
-  const lowDisks = hw.data?.disks.filter((d) => d.free_gb < 10) ?? [];
+  const cpuPercent = hw.data ? Math.round(hw.data.cpu_usage_percent) : 0;
 
   return (
-    <div className="view-content">
-      <div className="view-header">
-        <h1>Dashboard</h1>
-        <button
-          className="btn btn-primary"
-          onClick={runDiagnostics}
-          disabled={hw.loading || procs.loading}
-        >
-          {hw.loading || procs.loading ? (
-            <span className="spinner" />
-          ) : null}
-          Run Diagnostics
-        </button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <Button onClick={runDiagnostics} disabled={hw.loading || procs.loading}>
+          {hw.loading || procs.loading ? "Scanning..." : "Run Diagnostics"}
+        </Button>
       </div>
 
-      <div className="dashboard-grid">
-        <div className="card">
-          <h3 className="card-title">System Health</h3>
-          {hw.data ? (
-            <div className="hw-summary">
-              <div className="hw-row">
-                <span className="hw-label">CPU</span>
-                <span className="hw-value">{hw.data.cpu_model}</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {/* System Health */}
+        <Card>
+          <CardHeader>
+            <CardTitle>System Health</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {hw.loading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
               </div>
-              <div className="hw-row">
-                <span className="hw-label">Cores / Threads</span>
-                <span className="hw-value">
-                  {hw.data.cpu_cores} / {hw.data.cpu_threads}
-                </span>
-              </div>
-              <div className="hw-row">
-                <span className="hw-label">CPU Usage</span>
-                <span className="hw-value">{hw.data.cpu_usage_percent.toFixed(1)}%</span>
-              </div>
-              {hw.data.cpu_freq_mhz > 0 && (
-                <div className="hw-row">
-                  <span className="hw-label">CPU Frequency</span>
-                  <span className="hw-value">{(hw.data.cpu_freq_mhz / 1000).toFixed(2)} GHz</span>
+            ) : hw.data ? (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">CPU</span>
+                    <span>{cpuPercent}%</span>
+                  </div>
+                  <Progress value={cpuPercent} />
                 </div>
-              )}
-              <div className="hw-row">
-                <span className="hw-label">RAM</span>
-                <span className="hw-value">
-                  {hw.data.ram_used_mb} / {hw.data.ram_total_mb} MB ({ramUsedPercent}%)
-                </span>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">RAM</span>
+                    <span>{hw.data.ram_used_mb} / {hw.data.ram_total_mb} MB</span>
+                  </div>
+                  <Progress value={ramUsedPercent} />
+                </div>
+                <div className="pt-2 border-t border-border space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">GPU</span>
+                    <span className="text-right truncate max-w-[60%]">{hw.data.gpu_model}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">OS</span>
+                    <span>{hw.data.os_name}</span>
+                  </div>
+                </div>
               </div>
-              <div className="hw-row">
-                <span className="hw-label">GPU</span>
-                <span className="hw-value">{hw.data.gpu_model}</span>
-              </div>
-              <div className="hw-row">
-                <span className="hw-label">OS</span>
-                <span className="hw-value">
-                  {hw.data.os_name} {hw.data.os_version}
-                </span>
-              </div>
-            </div>
-          ) : hw.error ? (
-            <div className="error-state">{hw.error}</div>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u2699"}</span>
-              <span>Click "Run Diagnostics" to scan your system</span>
-            </div>
-          )}
-        </div>
+            ) : hw.error ? (
+              <p className="text-sm text-destructive">{hw.error}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Click "Run Diagnostics" to scan your system
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="card">
-          <h3 className="card-title">Discovered Launchers</h3>
-          {launchers.loading ? (
-            <div className="loading-center"><span className="spinner" /></div>
-          ) : launchers.data && launchers.data.length > 0 ? (
-            <ul className="launcher-list">
-              {launchers.data.map((l, i) => (
-                <li key={i} className="launcher-item">
-                  <span className="launcher-name">{l.name}</span>
-                  <span className="launcher-path">{l.path}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u25A3"}</span>
-              <span>No launchers detected</span>
-            </div>
-          )}
-        </div>
-
-        <div className="card">
-          <h3 className="card-title">Resource Hogs</h3>
-          {procs.data ? (
-            resourceHogs.length > 0 ? (
-              <ul className="hog-list">
-                {resourceHogs.slice(0, 5).map((p) => (
-                  <li key={p.pid} className="hog-item">
-                    <div className="hog-name">{p.name}</div>
-                    <div className="hog-stats">
-                      <span>{p.ram_mb.toFixed(0)} MB</span>
-                      <span>{p.cpu_percent.toFixed(1)}% CPU</span>
-                    </div>
-                    <div className="hog-rec">{p.recommendation}</div>
+        {/* Discovered Launchers */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Discovered Launchers</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {launchers.loading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            ) : launchers.data && launchers.data.length > 0 ? (
+              <ul className="space-y-2">
+                {launchers.data.map((l, i) => (
+                  <li key={i} className="flex items-center justify-between text-sm">
+                    <span className="font-medium">{l.name}</span>
+                    <span className="text-muted-foreground text-xs truncate max-w-[50%]">{l.path}</span>
                   </li>
                 ))}
               </ul>
             ) : (
-              <div className="empty-state">
-                <span>No resource hogs detected</span>
-              </div>
-            )
-          ) : procs.error ? (
-            <div className="error-state">{procs.error}</div>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u26A0"}</span>
-              <span>Run diagnostics to detect background processes</span>
-            </div>
-          )}
-        </div>
+              <p className="text-sm text-muted-foreground">No launchers detected</p>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="card">
-          <h3 className="card-title">Top Recommendations</h3>
-          {recs.data && recs.data.length > 0 ? (
-            <ul className="rec-preview-list">
-              {recs.data.slice(0, 3).map((r) => (
-                <li key={r.id} className="rec-preview-item">
-                  <div className="rec-preview-header">
-                    <span className={`badge badge-${r.severity}`}>{r.severity}</span>
-                    <span className={`badge badge-${r.confidence}`}>{r.confidence}</span>
-                  </div>
-                  <div className="rec-preview-title">{r.title}</div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u2691"}</span>
-              <span>Add and analyze an instance for recommendations</span>
-            </div>
-          )}
-        </div>
+        {/* Resource Hogs */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Resource Hogs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {procs.data ? (
+              resourceHogs.length > 0 ? (
+                <ul className="space-y-3">
+                  {resourceHogs.slice(0, 5).map((p) => (
+                    <li key={p.pid} className="space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium font-mono">{p.name}</span>
+                        <div className="flex gap-2 text-xs text-muted-foreground">
+                          <span>{p.ram_mb.toFixed(0)} MB</span>
+                          <span>{p.cpu_percent.toFixed(1)}% CPU</span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-warning">{p.recommendation}</p>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">No resource hogs detected</p>
+              )
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Run diagnostics to detect background processes
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="card">
-          <h3 className="card-title">Recent Sessions</h3>
-          {sessions.data && sessions.data.length > 0 ? (
-            <ul className="session-preview-list">
-              {sessions.data.slice(0, 4).map((s) => (
-                <li key={s.id} className="session-preview-item">
-                  <span className={`badge badge-${s.status === "active" ? "success" : "info"}`}>
-                    {s.status}
-                  </span>
-                  <span className="session-preview-date">
-                    {new Date(s.started_at).toLocaleDateString()}
-                  </span>
-                  {s.duration_secs != null && (
-                    <span className="session-preview-duration">
-                      {formatDuration(s.duration_secs)}
+        {/* Top Recommendations */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Recommendations</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {recs.data && recs.data.length > 0 ? (
+              <ul className="space-y-3">
+                {recs.data.slice(0, 3).map((r) => (
+                  <li key={r.id} className="space-y-1">
+                    <div className="flex gap-1.5">
+                      <Badge variant={r.severity === "error" ? "destructive" : "secondary"}>
+                        {r.severity}
+                      </Badge>
+                      <Badge variant="outline">{r.confidence}</Badge>
+                    </div>
+                    <p className="text-sm">{r.title}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Add and analyze an instance for recommendations
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Recent Sessions */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Recent Sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {sessions.data && sessions.data.length > 0 ? (
+              <ul className="space-y-2">
+                {sessions.data.slice(0, 4).map((s) => (
+                  <li key={s.id} className="flex items-center gap-2 text-sm">
+                    <Badge variant={s.status === "active" ? "default" : "secondary"}>
+                      {s.status}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {new Date(s.started_at).toLocaleDateString()}
                     </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u25F7"}</span>
-              <span>No sessions recorded yet</span>
-            </div>
-          )}
-        </div>
+                    {s.duration_secs != null && (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        {formatDuration(s.duration_secs)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No sessions recorded yet</p>
+            )}
+          </CardContent>
+        </Card>
 
-        <div className="card">
-          <h3 className="card-title">Saved Instances</h3>
-          {saved.data && saved.data.length > 0 ? (
-            <ul className="saved-preview-list">
-              {saved.data.slice(0, 4).map((inst) => (
-                <li key={inst.id} className="saved-preview-item">
-                  <span className="saved-name">{inst.name}</span>
-                  <span className="saved-meta">
-                    {inst.minecraft_version ?? "Unknown version"}
-                    {inst.loader_type ? ` / ${inst.loader_type}` : ""}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-state">
-              <span className="empty-state-icon">{"\u25A3"}</span>
-              <span>No instances saved</span>
-            </div>
-          )}
-        </div>
+        {/* Saved Instances */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Saved Instances</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {saved.data && saved.data.length > 0 ? (
+              <ul className="space-y-2">
+                {saved.data.slice(0, 4).map((inst) => (
+                  <li key={inst.id} className="text-sm">
+                    <span className="font-medium">{inst.name}</span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {inst.minecraft_version ?? "Unknown"}
+                      {inst.loader_type ? ` / ${inst.loader_type}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No instances saved</p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      {lowDisks.length > 0 && (
-        <div className="disk-warning-banner">
-          <strong>Low disk space:</strong>
-          {lowDisks.map((d) => (
-            <span key={d.mount_point} className="disk-warning-item">
-              {d.name || d.mount_point} — {d.free_gb.toFixed(1)} GB free
-            </span>
-          ))}
-        </div>
-      )}
-
+      {/* Self-metrics footer */}
       {selfMetrics.data && (
-        <div className="self-metrics-footer">
-          <span className="self-metrics-label">GamePilot</span>
-          <span className="self-metrics-stat">CPU: {selfMetrics.data.cpu_percent.toFixed(1)}%</span>
-          <span className="self-metrics-stat">RAM: {selfMetrics.data.ram_mb.toFixed(0)} MB</span>
+        <div className="flex items-center gap-4 rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">GamePilot</span>
+          <span>CPU: {selfMetrics.data.cpu_percent.toFixed(1)}%</span>
+          <span>RAM: {selfMetrics.data.ram_mb.toFixed(0)} MB</span>
         </div>
       )}
     </div>

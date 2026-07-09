@@ -281,46 +281,36 @@ fn detect_gpu_details() -> (String, u64, String) {
 
 #[cfg(target_os = "windows")]
 fn detect_gpu_windows() -> (String, u64, String) {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
-    let name = Command::new("wmic")
-        .args(["path", "win32_videocontroller", "get", "name"])
+    let output = Command::new("wmic")
+        .args(["path", "win32_videocontroller", "get", "name,adapterram,driverversion", "/format:csv"])
+        .creation_flags(0x08000000)
         .output()
-        .ok()
-        .and_then(|out| {
-            let text = String::from_utf8_lossy(&out.stdout).to_string();
-            text.lines()
-                .nth(1)
-                .map(|l| l.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_else(|| "Unknown GPU".to_string());
+        .ok();
 
-    let vram = Command::new("wmic")
-        .args(["path", "win32_videocontroller", "get", "adapterram"])
-        .output()
-        .ok()
-        .and_then(|out| {
+    match output {
+        Some(out) => {
             let text = String::from_utf8_lossy(&out.stdout).to_string();
-            text.lines()
-                .nth(1)
-                .and_then(|l| l.trim().parse::<u64>().ok())
-                .map(|bytes| bytes / (1024 * 1024))
-        })
-        .unwrap_or(0);
+            let data_line = text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .find(|l| !l.starts_with("Node"));
 
-    let driver = Command::new("wmic")
-        .args(["path", "win32_videocontroller", "get", "driverversion"])
-        .output()
-        .ok()
-        .and_then(|out| {
-            let text = String::from_utf8_lossy(&out.stdout).to_string();
-            text.lines()
-                .nth(1)
-                .map(|l| l.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .unwrap_or_default();
-
-    (name, vram, driver)
+            match data_line {
+                Some(line) => {
+                    let parts: Vec<&str> = line.split(',').collect();
+                    let name = parts.get(3).unwrap_or(&"Unknown GPU").trim().to_string();
+                    let vram = parts.get(1)
+                        .and_then(|v| v.trim().parse::<u64>().ok())
+                        .map(|b| b / (1024 * 1024))
+                        .unwrap_or(0);
+                    let driver = parts.get(2).unwrap_or(&"").trim().to_string();
+                    (name, vram, driver)
+                }
+                None => ("Unknown GPU".to_string(), 0, String::new()),
+            }
+        }
+        None => ("Unknown GPU".to_string(), 0, String::new()),
+    }
 }

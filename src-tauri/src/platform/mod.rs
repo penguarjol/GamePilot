@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn detect_java_installations() -> Vec<JavaInstallation> {
     let mut javas = Vec::new();
@@ -24,10 +24,19 @@ pub struct JavaInstallation {
     pub is_64bit: bool,
 }
 
+fn create_hidden_command(program: &Path) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
+
 #[cfg(target_os = "windows")]
 fn detect_java_windows(javas: &mut Vec<JavaInstallation>) {
-    use std::process::Command;
-
     let search_paths = vec![
         std::env::var("JAVA_HOME").ok().map(PathBuf::from),
         Some(PathBuf::from("C:\\Program Files\\Java")),
@@ -55,7 +64,8 @@ fn detect_java_windows(javas: &mut Vec<JavaInstallation>) {
         }
     }
 
-    if let Ok(output) = Command::new("where").arg("java").output() {
+    let where_path = Path::new("C:\\Windows\\System32\\where.exe");
+    if let Ok(output) = create_hidden_command(where_path).arg("java").output() {
         let text = String::from_utf8_lossy(&output.stdout);
         for line in text.lines() {
             let p = PathBuf::from(line.trim());
@@ -72,9 +82,7 @@ fn detect_java_windows(javas: &mut Vec<JavaInstallation>) {
 fn detect_java_macos(javas: &mut Vec<JavaInstallation>) {
     let search_paths = vec![
         std::env::var("JAVA_HOME").ok().map(PathBuf::from),
-        Some(PathBuf::from(
-            "/Library/Java/JavaVirtualMachines",
-        )),
+        Some(PathBuf::from("/Library/Java/JavaVirtualMachines")),
     ];
 
     for maybe_path in search_paths.into_iter().flatten() {
@@ -99,7 +107,7 @@ fn detect_java_macos(javas: &mut Vec<JavaInstallation>) {
         }
     }
 
-    if let Ok(output) = std::process::Command::new("which").arg("java").output() {
+    if let Ok(output) = create_hidden_command(Path::new("/usr/bin/which")).arg("java").output() {
         let text = String::from_utf8_lossy(&output.stdout);
         let p = PathBuf::from(text.trim());
         if p.exists() && !javas.iter().any(|j| j.path == p) {
@@ -110,8 +118,8 @@ fn detect_java_macos(javas: &mut Vec<JavaInstallation>) {
     }
 }
 
-fn probe_java(java_path: &PathBuf) -> Option<JavaInstallation> {
-    let output = std::process::Command::new(java_path)
+fn probe_java(java_path: &Path) -> Option<JavaInstallation> {
+    let output = create_hidden_command(java_path)
         .arg("-version")
         .output()
         .ok()?;
@@ -130,7 +138,7 @@ fn probe_java(java_path: &PathBuf) -> Option<JavaInstallation> {
     let is_64bit = stderr.contains("64-Bit");
 
     Some(JavaInstallation {
-        path: java_path.clone(),
+        path: java_path.to_path_buf(),
         version,
         vendor,
         is_64bit,

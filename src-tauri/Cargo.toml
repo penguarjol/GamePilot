@@ -1,6 +1,6 @@
 [package]
 name = "gamepilot-app"
-version = "0.1.2"
+version = "0.2.0"
 description = "GamePilot — Universal Gaming Intelligence Platform"
 authors = ["GamePilot"]
 edition = "2021"

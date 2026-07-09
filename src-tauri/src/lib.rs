@@ -181,17 +181,49 @@ fn launch_instance(
         jvm_args: None,
     };
 
-    let result = launch::launch_instance(&profile);
+    let mut result = launch::launch_instance(&profile);
 
     if result.success {
-        if let Some(ref session_id) = result.session_id {
-            let app = state.lock().unwrap();
-            let _ = sessions::create_session(&app.db, &instance_id, &result.method);
-            log::info!("Session created: {}", session_id);
+        let app = state.lock().unwrap();
+        match sessions::create_session(&app.db, &instance_id, &result.method) {
+            Ok(session) => {
+                result.session_id = Some(session.id.clone());
+                log::info!("Session created: {}", session.id);
+            }
+            Err(e) => log::error!("Failed to create session: {}", e),
         }
     }
 
     result
+}
+
+#[tauri::command]
+fn store_session_telemetry(
+    session_id: String,
+    cpu_avg: f64,
+    ram_avg: f64,
+    ram_peak: f64,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().unwrap();
+    sessions::store_session_telemetry(&app.db, &session_id, cpu_avg, ram_avg, ram_peak)
+}
+
+#[tauri::command]
+fn get_recommendations_for_path(
+    instance_path: String,
+    launcher: String,
+) -> Vec<minecraft::rules::Recommendation> {
+    let instance = minecraft::instance::parse_instance(
+        std::path::Path::new(&instance_path),
+        &launcher,
+    );
+    let hw = hardware::collect_hardware_info();
+    let mod_analysis = instance
+        .mods_path
+        .as_ref()
+        .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
+    minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref())
 }
 
 #[tauri::command]
@@ -457,10 +489,12 @@ pub fn run() {
             analyze_configs,
             get_modpack_health,
             get_recommendations,
+            get_recommendations_for_path,
             update_recommendation_status,
             save_recommendation,
             detect_java,
             launch_instance,
+            store_session_telemetry,
             end_session,
             get_sessions,
             get_session_report,

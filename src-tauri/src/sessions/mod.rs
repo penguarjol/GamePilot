@@ -49,15 +49,46 @@ pub fn create_session(db: &Database, instance_id: &str, launch_method: &str) -> 
 }
 
 pub fn end_session(db: &Database, session_id: &str) -> Result<Session, String> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now();
+    let now_str = now.to_rfc3339();
     let conn = db.conn();
 
+    let started_at: String = conn
+        .query_row(
+            "SELECT started_at FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| format!("Session not found: {}", e))?;
+
+    let duration_secs = chrono::DateTime::parse_from_rfc3339(&started_at)
+        .ok()
+        .map(|start| (now - start.with_timezone(&chrono::Utc)).num_seconds())
+        .filter(|&d| d >= 0);
+
     conn.execute(
-        "UPDATE sessions SET ended_at = ?1, status = 'completed' WHERE id = ?2",
-        rusqlite::params![now, session_id],
-    ).map_err(|e| format!("Failed to end session: {}", e))?;
+        "UPDATE sessions SET ended_at = ?1, duration_secs = ?2, status = 'completed' WHERE id = ?3",
+        rusqlite::params![now_str, duration_secs, session_id],
+    )
+    .map_err(|e| format!("Failed to end session: {}", e))?;
 
     get_session(db, session_id)
+}
+
+pub fn store_session_telemetry(
+    db: &Database,
+    session_id: &str,
+    cpu_avg: f64,
+    ram_avg: f64,
+    ram_peak: f64,
+) -> Result<(), String> {
+    let conn = db.conn();
+    conn.execute(
+        "UPDATE sessions SET cpu_avg_percent = ?1, ram_avg_mb = ?2, ram_peak_mb = ?3 WHERE id = ?4",
+        rusqlite::params![cpu_avg, ram_avg, ram_peak, session_id],
+    )
+    .map_err(|e| format!("Failed to store telemetry: {}", e))?;
+    Ok(())
 }
 
 pub fn get_session(db: &Database, session_id: &str) -> Result<Session, String> {
@@ -140,10 +171,21 @@ pub fn generate_report(db: &Database, session_id: &str) -> Result<SessionReport,
         )
         .unwrap_or(0);
 
+    let duration_part = session
+        .duration_secs
+        .map(|d| format!(" Duration: {}m {}s.", d / 60, d % 60))
+        .unwrap_or_default();
+
+    let perf_part = match (session.cpu_avg_percent, session.ram_avg_mb) {
+        (Some(cpu), Some(ram)) => format!(" Avg CPU: {:.1}%, Avg RAM: {:.0} MB.", cpu, ram),
+        _ => String::new(),
+    };
+
     let summary = format!(
-        "Session for instance {} started at {}. {} recommendations generated, {} process observations recorded.",
+        "Session for instance {}.{}{} {} recommendations, {} process observations.",
         session.instance_id,
-        session.started_at,
+        duration_part,
+        perf_part,
         rec_count,
         obs_count
     );

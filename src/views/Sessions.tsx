@@ -12,6 +12,7 @@ export function Sessions() {
   const [telemetry, setTelemetry] = useState<TelemetrySample | null>(null);
   const [gameRunning, setGameRunning] = useState<boolean | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const samplesRef = useRef<{ cpu: number[]; ram: number[] }>({ cpu: [], ram: [] });
 
   useEffect(() => {
     sessions.execute();
@@ -22,10 +23,13 @@ export function Sessions() {
 
   useEffect(() => {
     if (hasActiveSession) {
+      samplesRef.current = { cpu: [], ram: [] };
       const poll = async () => {
         try {
           const sample = await invoke<TelemetrySample>("get_telemetry_sample");
           setTelemetry(sample);
+          samplesRef.current.cpu.push(sample.cpu_percent);
+          samplesRef.current.ram.push(sample.ram_used_mb);
         } catch { /* ignore polling errors */ }
         try {
           const running = await invoke<boolean>("is_game_running", { processName: "java" });
@@ -33,6 +37,18 @@ export function Sessions() {
           if (!running) {
             const active = sessions.data?.find((s) => s.status === "active");
             if (active) {
+              const { cpu, ram } = samplesRef.current;
+              if (cpu.length > 0) {
+                const cpuAvg = cpu.reduce((a, b) => a + b, 0) / cpu.length;
+                const ramAvg = ram.reduce((a, b) => a + b, 0) / ram.length;
+                const ramPeak = Math.max(...ram);
+                await invoke("store_session_telemetry", {
+                  sessionId: active.id,
+                  cpuAvg,
+                  ramAvg,
+                  ramPeak,
+                }).catch(() => {});
+              }
               await invoke<Session>("end_session", { sessionId: active.id });
               await sessions.execute();
             }

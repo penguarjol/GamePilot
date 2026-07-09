@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useInvoke } from "../hooks/useInvoke";
-import type { Recommendation, SavedInstance, RollbackPoint, ConfigAnalysis, ConfigRecommendation } from "../types";
+import type { Recommendation, SavedInstance, ConfigAnalysis, ConfigRecommendation } from "../types";
 
 type FilterCategory = "all" | "java_jvm" | "modpack";
 type FilterSeverity = "all" | "warning" | "info" | "error";
-type FilterStatus = "all" | "new" | "applied" | "ignored" | "deferred";
+type FilterStatus = "all" | "new" | "applied" | "ignored_once" | "ignored_always" | "deferred";
 
 export function Recommendations() {
   const saved = useInvoke<SavedInstance[]>("get_saved_instances");
@@ -35,8 +35,9 @@ export function Recommendations() {
     setLoading(true);
     setError(null);
     try {
-      const recs = await invoke<Recommendation[]>("get_recommendations", {
-        instanceJson: JSON.stringify(instance),
+      const recs = await invoke<Recommendation[]>("get_recommendations_for_path", {
+        instancePath: instance.path,
+        launcher: instance.launcher ?? "Custom",
       });
       setRecommendations(recs);
 
@@ -59,35 +60,23 @@ export function Recommendations() {
   const applyRecommendation = async (rec: Recommendation) => {
     if (rec.action_type === "open_link" && rec.action_data) {
       window.open(rec.action_data, "_blank");
-      setAppliedIds((prev) => new Set(prev).add(rec.id));
+      await updateStatus(rec.id, "applied");
       return;
     }
 
-    if (rec.action_type === "set_jvm_arg" && rec.action_data) {
-      setAppliedIds((prev) => new Set(prev).add(rec.id));
-    }
+    await updateStatus(rec.id, "accepted");
   };
 
-  const rollback = async (rec: Recommendation) => {
-    if (!rec.action_data) return;
-    try {
-      const rp: RollbackPoint = JSON.parse(rec.action_data);
-      await invoke("rollback_file", { rollbackPointJson: JSON.stringify(rp) });
-      setAppliedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(rec.id);
-        return next;
-      });
-    } catch {
-      // Rollback data not available for this recommendation type
-    }
-  };
 
   const updateStatus = async (recId: string, status: string) => {
-    await invoke("update_recommendation_status", { recommendationId: recId, status });
-    setStatusMap((prev) => ({ ...prev, [recId]: status }));
-    if (status === "applied") {
-      setAppliedIds((prev) => new Set(prev).add(recId));
+    try {
+      await invoke("update_recommendation_status", { recommendationId: recId, status });
+      setStatusMap((prev) => ({ ...prev, [recId]: status }));
+      if (status === "applied" || status === "accepted") {
+        setAppliedIds((prev) => new Set(prev).add(recId));
+      }
+    } catch (err) {
+      setError(`Failed to update status: ${err}`);
     }
   };
 
@@ -100,7 +89,14 @@ export function Recommendations() {
   const filtered = recommendations.filter((r) => {
     if (filterCategory !== "all" && r.category !== filterCategory) return false;
     if (filterSeverity !== "all" && r.severity !== filterSeverity) return false;
-    if (filterStatus !== "all" && getRecStatus(r.id) !== filterStatus) return false;
+    if (filterStatus !== "all") {
+      const s = getRecStatus(r.id);
+      if (filterStatus === "ignored_once") {
+        if (s !== "ignored_once" && s !== "ignored_always") return false;
+      } else if (s !== filterStatus) {
+        return false;
+      }
+    }
     return true;
   });
 
@@ -148,13 +144,19 @@ export function Recommendations() {
           </select>
         </label>
         <div className="status-filter-btns">
-          {(["all", "new", "applied", "ignored", "deferred"] as FilterStatus[]).map((s) => (
+          {([
+            ["all", "All"],
+            ["new", "New"],
+            ["applied", "Applied"],
+            ["ignored_once", "Ignored"],
+            ["deferred", "Deferred"],
+          ] as [FilterStatus, string][]).map(([value, label]) => (
             <button
-              key={s}
-              className={`btn btn-sm${filterStatus === s ? " btn-primary" : " btn-secondary"}`}
-              onClick={() => setFilterStatus(s)}
+              key={value}
+              className={`btn btn-sm${filterStatus === value ? " btn-primary" : " btn-secondary"}`}
+              onClick={() => setFilterStatus(value)}
             >
-              {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              {label}
             </button>
           ))}
         </div>
@@ -196,29 +198,21 @@ export function Recommendations() {
                     className="btn btn-primary btn-sm"
                     onClick={() => applyRecommendation(r)}
                   >
-                    {r.action_type === "open_link" ? "Open Link" : "Apply"}
-                  </button>
-                )}
-                {appliedIds.has(r.id) && r.action_type !== "open_link" && (
-                  <button
-                    className="btn btn-danger btn-sm"
-                    onClick={() => rollback(r)}
-                  >
-                    Rollback
+                    {r.action_type === "open_link" ? "Open Link" : "Mark Reviewed"}
                   </button>
                 )}
                 {getRecStatus(r.id) === "new" && (
                   <>
                     <button
                       className="btn btn-secondary btn-sm"
-                      onClick={() => updateStatus(r.id, "ignored")}
+                      onClick={() => updateStatus(r.id, "ignored_once")}
                     >
                       Ignore Once
                     </button>
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => {
-                        updateStatus(r.id, "ignored");
+                        updateStatus(r.id, "ignored_always");
                         invoke("add_ignore_rule", { ruleType: "recommendation", pattern: r.title });
                       }}
                     >
@@ -234,7 +228,7 @@ export function Recommendations() {
                 )}
                 {getRecStatus(r.id) !== "new" && (
                   <span className={`badge badge-status-${getRecStatus(r.id)}`}>
-                    {getRecStatus(r.id)}
+                    {getRecStatus(r.id).replace("_", " ")}
                   </span>
                 )}
               </div>

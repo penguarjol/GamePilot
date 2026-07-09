@@ -366,19 +366,19 @@ export function Minecraft() {
                         <div className="rec-status-actions">
                           <button
                             className="btn btn-primary btn-sm"
-                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "accepted" })}
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "accepted" }).catch(() => {})}
                           >
                             Accept
                           </button>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "ignored" })}
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "ignored_once" }).catch(() => {})}
                           >
                             Ignore
                           </button>
                           <button
                             className="btn btn-secondary btn-sm"
-                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "deferred" })}
+                            onClick={() => invoke("update_recommendation_status", { recommendationId: r.id, status: "deferred" }).catch(() => {})}
                           >
                             Defer
                           </button>

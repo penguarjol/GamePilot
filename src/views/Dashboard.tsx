@@ -16,7 +16,7 @@ export function Dashboard() {
   const launchers = useInvoke<DiscoveredLauncher[]>("discover_launchers");
   const sessions = useInvoke<Session[]>("get_sessions");
   const saved = useInvoke<SavedInstance[]>("get_saved_instances");
-  const recs = useInvoke<Recommendation[]>("get_recommendations");
+  const recs = useInvoke<Recommendation[]>("get_recommendations_for_path");
   const selfMetrics = useInvoke<SelfMetrics>("get_self_metrics");
 
   useEffect(() => {
@@ -31,16 +31,13 @@ export function Dashboard() {
     await Promise.all([hw.execute(), procs.execute()]);
   };
 
-  const loadRecommendations = async () => {
-    const instances = saved.data;
-    if (instances && instances.length > 0) {
-      await recs.execute({ instanceJson: JSON.stringify(instances[0]) });
-    }
-  };
-
   useEffect(() => {
     if (saved.data && saved.data.length > 0) {
-      loadRecommendations();
+      const inst = saved.data[0];
+      recs.execute({
+        instancePath: inst.path,
+        launcher: inst.launcher ?? "Custom",
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved.data]);

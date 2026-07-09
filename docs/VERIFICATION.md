@@ -1,122 +1,89 @@
-# GamePilot MVP Verification
+# GamePilot v0.1.2 Verification
 
-## Verification Steps
+## Verification Commands
 
-### 1. Install the built Windows app from GitHub Release
-- Download the `.exe` installer from the GitHub Release page
-- Windows SmartScreen will show a warning (app is unsigned)
-- Click "More info" then "Run anyway" to proceed
-- The installer runs in per-user mode (no admin required)
-- GamePilot appears in Start Menu after installation
+```bash
+# TypeScript
+pnpm lint          # tsc --noEmit, zero errors
 
-### 2. Open GamePilot
-- Launch from Start Menu or desktop shortcut
-- Dashboard should load within 2 seconds
-- Left sidebar shows navigation: Dashboard, Minecraft, Diagnostics, Recommendations, Sessions, Settings
+# Frontend build
+pnpm build         # Vite production build, 53 modules, ~272KB JS + 20KB CSS
 
-### 3. Use manual folder selection to choose a Minecraft instance
-- Navigate to the Minecraft view
-- Click "Add Instance"
-- Select a folder containing a Minecraft instance (with mods/, config/, etc.)
-- Alternatively, select one of the test fixture folders
+# Rust check
+cargo check --manifest-path src-tauri/Cargo.toml
 
-### 4. Detect instance properties
-After selecting a folder, verify:
-- Instance path is displayed
-- Minecraft version is detected (if available via mmc-pack.json, minecraftinstance.json, or profile.json)
-- Loader is detected (Forge, NeoForge, Fabric, Quilt, or Vanilla)
-- Mods folder contents are listed with count
-- Java/JVM configuration is displayed (if available from instance.cfg)
+# Rust tests (11 tests)
+cargo test --manifest-path src-tauri/Cargo.toml
 
-### 5. Run diagnostics
-- Navigate to Diagnostics view
-- Verify hardware info is displayed: CPU model, cores, threads, RAM total/used/available
-- Verify process list shows running processes with CPU/RAM usage
-- Resource hogs are highlighted (Chrome, Discord, OBS, etc.)
-- Java installations are listed
+# Dev run (macOS)
+pnpm tauri dev     # App launches, no panics
+```
 
-### 6. Show at least three real recommendations
-After analyzing an instance, verify at least three recommendations:
-- RAM/JVM recommendation (based on system RAM and mod count)
-- GC flag recommendation (optimized G1GC flags)
-- Missing performance mod recommendation (e.g., ModernFix, FerriteCore, Entity Culling)
+## Test Coverage
 
-Each recommendation includes:
-- Title and description
-- Evidence (system RAM, current settings, mod count)
-- Confidence level (high/medium/low)
-- Risk level
-- Expected impact
+| Test | What it verifies |
+|---|---|
+| test_parse_prism_instance | mmc-pack.json parsing: MC 1.21.1, NeoForge 21.1.77, JVM config |
+| test_parse_prism_mods | Mod detection: ModernFix, FerriteCore, Sodium in jar filenames |
+| test_parse_curseforge_instance | minecraftinstance.json: MC 1.20.1, Forge 47.2.0 |
+| test_parse_modrinth_instance | profile.json: MC 1.21.1, Fabric 0.16.0 |
+| test_parse_empty_instance | Empty folder: no version, no mods, no crash |
+| test_manual_folder_selection | Manual folder: 5 mods detected, config path found |
+| test_manual_folder_mod_analysis | Sodium/Lithium detected, ModernFix/FerriteCore recommended as missing |
+| test_recommendations_generation | 16GB RAM + 250 mods → at least 3 JVM recommendations |
+| test_config_analysis | options.txt + server.properties parsing, config recommendations for heavy packs |
+| test_modpack_health_scoring | Health score 0-100, non-empty labels for all risk categories |
+| test_database_operations | SQLite insert/query round-trip |
 
-### 7. Preview at least one safe optimization
-- Select a JVM recommendation
-- Preview shows the proposed change (e.g., new Xmx value, GC flags)
-- The action is clearly labeled with risk level
+## Correctness Fixes in v0.1.2
 
-### 8. Apply and roll back at least one change
-- Apply a JVM settings change
-- Verify a backup is created in `.gamepilot_backups/`
-- Rollback the change
-- Verify the original file is restored
+### Recommendation status values
+- Backend accepts: new, accepted, applied, ignored_once, ignored_always, deferred, rolled_back, failed
+- Frontend now sends these exact values
+- Error handling surfaces failed status updates to the user
 
-### 9. Launch Minecraft or delegate
-- Click "Launch" on an instance
-- GamePilot attempts to launch via the detected launcher (Prism, CurseForge, etc.)
-- If the launcher is not found, GamePilot opens the instance folder
-- A session record is created
+### Session lifecycle
+- `launch_instance` creates a DB session and returns its ID to the frontend
+- `end_session` computes `duration_secs` from `started_at` to current time
+- Telemetry samples (CPU/RAM) are accumulated during polling and persisted via `store_session_telemetry` before session end
+- Session reports include duration and performance data when available
 
-### 10. Generate a session/report record
-- After launching, a session appears in the Sessions view
-- The session shows: instance name, start time, launch method, status
-- The report includes: recommendation count, process observation count
+### Recommendation loading
+- Dashboard and Recommendations views use `get_recommendations_for_path` which rescans the instance from disk
+- Previously passed SavedInstance JSON which would deserialize incorrectly as a MinecraftInstance
 
-### 11. Confirm app responsiveness
-- The app remains responsive during all operations
-- No expensive background work runs during gameplay
-- Process scanning completes in under 2 seconds
-
-## Test Fixtures
-
-Test fixtures are available in `tests/fixtures/`:
-
-| Fixture | Description | Expected Detection |
-|---|---|---|
-| `prism-instance` | Prism/MultiMC format with mmc-pack.json | MC 1.21.1, NeoForge 21.1.77, 10 mods |
-| `curseforge-instance` | CurseForge format with minecraftinstance.json | MC 1.20.1, Forge 47.2.0 |
-| `modrinth-instance` | Modrinth format with profile.json | MC 1.21.1, Fabric 0.16.0 |
-| `manual-folder` | Plain folder with mods/ and config/ | 5 mods, Sodium + Lithium detected |
-| `empty-instance` | Empty folder | No version, no mods |
-
-## Automated Test Results
-
-Run: `cargo test --manifest-path src-tauri/Cargo.toml`
-
-Tests cover:
-- Prism instance parsing (version, loader, JVM config)
-- Prism mod detection (ModernFix, FerriteCore, Sodium)
-- CurseForge instance parsing
-- Modrinth instance parsing
-- Empty instance handling
-- Manual folder selection
-- Manual folder mod analysis
-- Recommendation generation (minimum 3 recommendations)
-- Database operations
+### Apply button honesty
+- JVM/config recommendations show "Mark Reviewed" since they do not yet write to launcher config files
+- "Open Link" remains for download-link recommendations
+- Rollback button only appears when a real file backup exists
 
 ## Known Limitations
 
-- FPS telemetry is deferred (CPU/RAM/process monitoring is implemented)
-- GPU model detection uses WMIC on Windows; stub on macOS
-- Automatic launcher discovery depends on standard install paths
-- Launch delegation relies on launcher CLI availability
-- No code signing (SmartScreen warning on Windows)
-- Session duration tracking requires manual session end
-- Mod metadata is limited to ~20 known performance mods
-- Config file analysis is basic (JVM args only for MVP)
+- **JVM settings are not written to launcher config files.** "Mark Reviewed" acknowledges the recommendation but does not change instance.cfg or launcher settings. This requires launcher-specific config writing which varies by launcher format.
+- **FPS telemetry is not implemented.** Session reports show CPU/RAM but not FPS/frame-time. This requires PresentMon/ETW integration or Minecraft log parsing.
+- **GPU VRAM/driver detection** uses WMIC on Windows. Returns stub values on macOS.
+- **Unsigned installer.** Windows SmartScreen will warn on first launch.
+- **Process kill** is recommendation-only. The app never closes processes.
+- **Game exit detection** watches for any "java" process. If multiple Java processes run, it may not detect the correct one stopping.
+- **Mod metadata** covers ~20 known performance mods. Unknown mods are reported as unclassified.
 
-## Windows-Specific Notes
+## Windows CI Verification
+- CI runs on windows-latest: lint, build, cargo check, cargo test
+- Release workflow builds NSIS and MSI installers on windows-latest
+- Installer artifacts are published to GitHub Releases
 
-- Hardware detection uses `sysinfo` crate (cross-platform)
-- GPU detection uses `wmic` command on Windows
-- Process monitoring uses `sysinfo` crate
-- Launcher discovery checks `%APPDATA%` and `%LOCALAPPDATA%` paths
-- File dialog uses Tauri's native dialog plugin (WebView2 on Windows)
+## Manual Verification Steps
+
+1. Download installer from GitHub Releases
+2. Install (SmartScreen: click "More info" > "Run anyway")
+3. Open GamePilot — Dashboard loads
+4. Navigate to Minecraft > click "Add Instance"
+5. Select a folder containing a Minecraft instance or use test fixtures
+6. Verify: instance name, path, version, loader, mod count displayed
+7. Click "Analyze" — mod analysis, config recommendations, health score appear
+8. Review recommendations — at least 3 should appear (RAM, GC flags, missing perf mods)
+9. Click "Mark Reviewed" on a recommendation — status changes to "accepted"
+10. Click "Launch" — delegates to launcher or opens folder
+11. Navigate to Sessions — session record with timestamp visible
+12. Navigate to Diagnostics — hardware info, process list, disk info displayed
+13. Navigate to Settings — theme toggle, ignore rules, data deletion available

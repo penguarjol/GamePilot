@@ -1,0 +1,13 @@
+{
+  "gameVersion": "1.20.1",
+  "baseModLoader": {
+    "name": "forge-47.2.0",
+    "minecraftVersion": "1.20.1",
+    "forgeVersion": "47.2.0"
+  },
+  "name": "CurseForge Test Pack",
+  "installedModpack": {
+    "name": "All the Mods 9",
+    "version": "0.2.60"
+  }
+}

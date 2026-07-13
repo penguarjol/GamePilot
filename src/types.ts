@@ -281,3 +281,25 @@ export interface InstallResult {
   installed_path: string;
   message: string;
 }
+
+export interface GovernorStatus {
+  mode: string;
+  self_cpu: number;
+  self_ram_mb: number;
+  telemetry_interval_ms: number;
+  game_running: boolean;
+}
+
+export interface LogEvent {
+  timestamp: string;
+  level: string;
+  message: string;
+}
+
+export interface TelemetrySummary {
+  minute_ts: string;
+  cpu_avg: number | null;
+  ram_avg_mb: number | null;
+  ram_peak_mb: number | null;
+  hog_count: number | null;
+}

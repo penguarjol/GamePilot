@@ -427,6 +427,47 @@ export function Minecraft() {
     }
   };
 
+  const parseJvmActionData = (actionData: string) => {
+    let xmxMb: number | undefined;
+    let xmsMb: number | undefined;
+    const otherArgs: string[] = [];
+
+    for (const token of actionData.split(/\s+/)) {
+      const xmxMatch = token.match(/^-Xmx(\d+)m$/i);
+      const xmsMatch = token.match(/^-Xms(\d+)m$/i);
+      if (xmxMatch) xmxMb = parseInt(xmxMatch[1], 10);
+      else if (xmsMatch) xmsMb = parseInt(xmsMatch[1], 10);
+      else if (token.trim()) otherArgs.push(token);
+    }
+
+    return { xmxMb, xmsMb, jvmArgs: otherArgs.length > 0 ? otherArgs.join(" ") : undefined };
+  };
+
+  const applyJvmSettings = async (rec: Recommendation) => {
+    if (!selectedInstance || !rec.action_data) return;
+    const { xmxMb, xmsMb, jvmArgs } = parseJvmActionData(rec.action_data);
+    try {
+      const rp = await invoke<RollbackPoint>("apply_jvm_settings", {
+        instancePath: selectedInstance.path,
+        xmxMb: xmxMb ?? null,
+        xmsMb: xmsMb ?? null,
+        jvmArgs: jvmArgs ?? null,
+        javaPath: null,
+        recommendationId: rec.id,
+      });
+      setAppliedChanges((prev) => [...prev, rp]);
+      setRecStatusMap((prev) => ({ ...prev, [rec.id]: "applied" }));
+      toast.success("JVM settings applied");
+      const refreshed = await invoke<MinecraftInstance>("scan_instance", {
+        path: selectedInstance.path,
+        launcher: selectedInstance.launcher,
+      });
+      setSelectedInstance(refreshed);
+    } catch (err) {
+      toast.error(`Failed to apply JVM settings: ${err}`);
+    }
+  };
+
   const riskColor = (score: number) =>
     score >= 70 ? "text-success" : score >= 40 ? "text-warning" : "text-destructive";
 
@@ -879,6 +920,11 @@ export function Minecraft() {
                               <Button size="sm" onClick={() => updateRecStatus(r.id, "accepted")}>Accept</Button>
                               <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "ignored_once")}>Ignore</Button>
                               <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "deferred")}>Defer</Button>
+                              {r.action_type === "set_jvm_arg" && r.action_data && (
+                                <Button size="sm" variant="secondary" onClick={() => applyJvmSettings(r)}>
+                                  Apply JVM Settings
+                                </Button>
+                              )}
                               {r.action_type === "open_link" && r.action_data && (
                                 <a href={r.action_data} target="_blank" rel="noreferrer">
                                   <Button size="sm" variant="secondary">Open Link</Button>

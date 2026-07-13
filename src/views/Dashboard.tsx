@@ -13,6 +13,7 @@ import type {
   Session,
   SavedInstance,
   SelfMetrics,
+  GovernorStatus,
 } from "@/types";
 
 function Skeleton({ className = "" }: { className?: string }) {
@@ -28,12 +29,14 @@ export function Dashboard() {
   const saved = useInvoke<SavedInstance[]>("get_saved_instances");
   const recs = useInvoke<Recommendation[]>("get_recommendations_for_path");
   const selfMetrics = useInvoke<SelfMetrics>("get_self_metrics");
+  const governor = useInvoke<GovernorStatus>("get_governor_status");
 
   useEffect(() => {
     launchers.execute();
     sessions.execute();
     saved.execute();
     selfMetrics.execute();
+    governor.execute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -279,6 +282,12 @@ export function Dashboard() {
           <span className="font-medium text-foreground">GamePilot</span>
           <span>CPU: {selfMetrics.data.cpu_percent.toFixed(1)}%</span>
           <span>RAM: {selfMetrics.data.ram_mb.toFixed(0)} MB</span>
+          {governor.data && (
+            <>
+              <span className="border-l border-border pl-4">Mode: {governor.data.mode}</span>
+              <span>Sampling: {(governor.data.telemetry_interval_ms / 1000).toFixed(0)}s</span>
+            </>
+          )}
         </div>
       )}
     </div>

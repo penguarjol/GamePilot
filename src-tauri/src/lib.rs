@@ -437,6 +437,61 @@ async fn enable_mod(mods_dir: String, filename: String) -> Result<String, String
     .map_err(|e| e.to_string())?
 }
 
+// --- JVM Settings ---
+
+#[tauri::command]
+fn apply_jvm_settings(
+    instance_path: String,
+    xmx_mb: Option<u32>,
+    xms_mb: Option<u32>,
+    jvm_args: Option<String>,
+    java_path: Option<String>,
+    recommendation_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<recommendations::RollbackPoint, String> {
+    let path = std::path::Path::new(&instance_path);
+    let cfg_path = path.join("instance.cfg");
+    if !cfg_path.exists() {
+        return Err("instance.cfg not found — JVM settings apply is supported for Prism/MultiMC instances".to_string());
+    }
+
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let rp = recommendations::backup_file(&cfg_path, &recommendation_id)?;
+    recommendations::save_rollback_point(&app.db, &rp)?;
+
+    let content = std::fs::read_to_string(&cfg_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    if let Some(xmx) = xmx_mb {
+        upsert_cfg_value(&mut lines, "MaxMemAlloc", &xmx.to_string());
+    }
+    if let Some(xms) = xms_mb {
+        upsert_cfg_value(&mut lines, "MinMemAlloc", &xms.to_string());
+    }
+    if let Some(ref args) = jvm_args {
+        upsert_cfg_value(&mut lines, "JvmArgs", args);
+    }
+    if let Some(ref java) = java_path {
+        upsert_cfg_value(&mut lines, "JavaPath", java);
+    }
+
+    let new_content = lines.join("\n") + "\n";
+    std::fs::write(&cfg_path, &new_content)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(rp)
+}
+
+fn upsert_cfg_value(lines: &mut Vec<String>, key: &str, value: &str) {
+    let prefix = format!("{}=", key);
+    if let Some(line) = lines.iter_mut().find(|l| l.starts_with(&prefix)) {
+        *line = format!("{}{}", prefix, value);
+    } else {
+        lines.push(format!("{}{}", prefix, value));
+    }
+}
+
 // --- Backup / Rollback ---
 
 #[tauri::command]
@@ -783,6 +838,7 @@ pub fn run() {
             end_session,
             get_sessions,
             get_session_report,
+            apply_jvm_settings,
             backup_file,
             rollback_file,
             delete_instance,

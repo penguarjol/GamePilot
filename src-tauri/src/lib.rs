@@ -617,10 +617,18 @@ fn apply_jvm_settings(
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<recommendations::RollbackPoint, String> {
     let path = std::path::Path::new(&instance_path);
-    let cfg_path = path.join("instance.cfg");
-    if !cfg_path.exists() {
-        return Err("instance.cfg not found — JVM settings apply is supported for Prism/MultiMC instances".to_string());
-    }
+
+    let (cfg_path, format) = if path.join("instance.cfg").exists() {
+        (path.join("instance.cfg"), "prism")
+    } else if path.join("minecraftinstance.json").exists() {
+        (path.join("minecraftinstance.json"), "curseforge")
+    } else if path.join("instance.json").exists() {
+        (path.join("instance.json"), "atlauncher")
+    } else if path.join("profile.json").exists() {
+        (path.join("profile.json"), "modrinth")
+    } else {
+        return Err("No recognized launcher config found. Supported: Prism/MultiMC (instance.cfg), CurseForge (minecraftinstance.json), ATLauncher (instance.json), Modrinth (profile.json)".to_string());
+    };
 
     let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
     let rp = recommendations::backup_file(&cfg_path, &recommendation_id)?;
@@ -628,41 +636,84 @@ fn apply_jvm_settings(
 
     let content = std::fs::read_to_string(&cfg_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
-    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-
-    let read_cfg_value = |lines: &[String], key: &str| -> Option<String> {
-        let prefix = format!("{}=", key);
-        lines.iter().find_map(|l| {
-            if l.starts_with(&prefix) { Some(l[prefix.len()..].to_string()) } else { None }
-        })
-    };
 
     let mut changes: Vec<(String, Option<String>, String)> = Vec::new();
 
-    if let Some(xmx) = xmx_mb {
-        let old = read_cfg_value(&lines, "MaxMemAlloc");
-        upsert_cfg_value(&mut lines, "MaxMemAlloc", &xmx.to_string());
-        changes.push(("MaxMemAlloc".to_string(), old, xmx.to_string()));
+    match format {
+        "prism" => {
+            let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+            let read_val = |lines: &[String], key: &str| -> Option<String> {
+                let prefix = format!("{}=", key);
+                lines.iter().find_map(|l| {
+                    if l.starts_with(&prefix) { Some(l[prefix.len()..].to_string()) } else { None }
+                })
+            };
+            if let Some(xmx) = xmx_mb {
+                changes.push(("MaxMemAlloc".into(), read_val(&lines, "MaxMemAlloc"), xmx.to_string()));
+                upsert_cfg_value(&mut lines, "MaxMemAlloc", &xmx.to_string());
+            }
+            if let Some(xms) = xms_mb {
+                changes.push(("MinMemAlloc".into(), read_val(&lines, "MinMemAlloc"), xms.to_string()));
+                upsert_cfg_value(&mut lines, "MinMemAlloc", &xms.to_string());
+            }
+            if let Some(ref args) = jvm_args {
+                changes.push(("JvmArgs".into(), read_val(&lines, "JvmArgs"), args.clone()));
+                upsert_cfg_value(&mut lines, "JvmArgs", args);
+            }
+            if let Some(ref java) = java_path {
+                changes.push(("JavaPath".into(), read_val(&lines, "JavaPath"), java.clone()));
+                upsert_cfg_value(&mut lines, "JavaPath", java);
+            }
+            std::fs::write(&cfg_path, lines.join("\n") + "\n")
+                .map_err(|e| format!("Failed to write config: {}", e))?;
+        }
+        "curseforge" => {
+            let mut json: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse CurseForge config: {}", e))?;
+            if let Some(xmx) = xmx_mb {
+                let old = json.get("allocatedMemory").and_then(|v| v.as_u64()).map(|v| v.to_string());
+                json["allocatedMemory"] = serde_json::json!(xmx);
+                changes.push(("allocatedMemory".into(), old, xmx.to_string()));
+            }
+            if let Some(ref args) = jvm_args {
+                let old = json.get("javaArgsOverride").and_then(|v| v.as_str()).map(String::from);
+                json["javaArgsOverride"] = serde_json::json!(args);
+                json["isCustomJavaArgs"] = serde_json::json!(true);
+                changes.push(("javaArgsOverride".into(), old, args.clone()));
+            }
+            if let Some(ref java) = java_path {
+                let old = json.get("javaPath").and_then(|v| v.as_str()).map(String::from);
+                json["javaPath"] = serde_json::json!(java);
+                json["isCustomJavaPath"] = serde_json::json!(true);
+                changes.push(("javaPath".into(), old, java.clone()));
+            }
+            let output = serde_json::to_string_pretty(&json)
+                .map_err(|e| format!("Failed to serialize config: {}", e))?;
+            std::fs::write(&cfg_path, output)
+                .map_err(|e| format!("Failed to write config: {}", e))?;
+        }
+        "atlauncher" | "modrinth" => {
+            let mut json: serde_json::Value = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse config: {}", e))?;
+            if let Some(xmx) = xmx_mb {
+                let old = json.get("memory").or(json.get("maximumMemory"))
+                    .and_then(|v| v.as_u64()).map(|v| v.to_string());
+                json["maximumMemory"] = serde_json::json!(xmx);
+                changes.push(("maximumMemory".into(), old, xmx.to_string()));
+            }
+            if let Some(ref args) = jvm_args {
+                let old = json.get("javaArguments").or(json.get("extraArguments"))
+                    .and_then(|v| v.as_str()).map(String::from);
+                json["javaArguments"] = serde_json::json!(args);
+                changes.push(("javaArguments".into(), old, args.clone()));
+            }
+            let output = serde_json::to_string_pretty(&json)
+                .map_err(|e| format!("Failed to serialize config: {}", e))?;
+            std::fs::write(&cfg_path, output)
+                .map_err(|e| format!("Failed to write config: {}", e))?;
+        }
+        _ => return Err("Unsupported launcher format".to_string()),
     }
-    if let Some(xms) = xms_mb {
-        let old = read_cfg_value(&lines, "MinMemAlloc");
-        upsert_cfg_value(&mut lines, "MinMemAlloc", &xms.to_string());
-        changes.push(("MinMemAlloc".to_string(), old, xms.to_string()));
-    }
-    if let Some(ref args) = jvm_args {
-        let old = read_cfg_value(&lines, "JvmArgs");
-        upsert_cfg_value(&mut lines, "JvmArgs", args);
-        changes.push(("JvmArgs".to_string(), old, args.clone()));
-    }
-    if let Some(ref java) = java_path {
-        let old = read_cfg_value(&lines, "JavaPath");
-        upsert_cfg_value(&mut lines, "JavaPath", java);
-        changes.push(("JavaPath".to_string(), old, java.clone()));
-    }
-
-    let new_content = lines.join("\n") + "\n";
-    std::fs::write(&cfg_path, &new_content)
-        .map_err(|e| format!("Failed to write config: {}", e))?;
 
     let instance_id = compute_instance_id(&instance_path);
     let conn = app.db.conn();

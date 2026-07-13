@@ -33,6 +33,9 @@ export function Settings() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [appVersion, setAppVersion] = useState<string>("...");
   const [exporting, setExporting] = useState(false);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
+  const [discordSaving, setDiscordSaving] = useState(false);
+  const [discordTesting, setDiscordTesting] = useState(false);
   const ignoreRules = useInvoke<IgnoreRule[]>("get_ignore_rules");
   const history = useInvoke<OptimizationAction[]>("get_optimization_history");
 
@@ -40,6 +43,7 @@ export function Settings() {
     ignoreRules.execute();
     history.execute();
     initTheme();
+    initDiscordWebhook();
     getVersion().then(setAppVersion).catch(() => setAppVersion("unknown"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -58,6 +62,38 @@ export function Settings() {
     setTheme(next);
     document.documentElement.classList.toggle("dark", next === "dark");
     await invoke("set_preference", { key: "theme", value: next });
+  };
+
+  const initDiscordWebhook = async () => {
+    try {
+      const saved = await invoke<string | null>("get_preference", { key: "discord_webhook_url" });
+      if (saved) setDiscordWebhookUrl(saved);
+    } catch { /* preference may not exist yet */ }
+  };
+
+  const saveDiscordWebhook = async () => {
+    setDiscordSaving(true);
+    try {
+      await invoke("set_preference", { key: "discord_webhook_url", value: discordWebhookUrl });
+      toast.success("Discord webhook URL saved");
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setDiscordSaving(false);
+    }
+  };
+
+  const testDiscordWebhook = async () => {
+    if (!discordWebhookUrl.trim()) return;
+    setDiscordTesting(true);
+    try {
+      await invoke("test_discord_webhook", { webhookUrl: discordWebhookUrl.trim() });
+      toast.success("Test message sent to Discord");
+    } catch (err) {
+      toast.error(`Test failed: ${err}`);
+    } finally {
+      setDiscordTesting(false);
+    }
   };
 
   const removeRule = async (ruleId: string) => {
@@ -129,6 +165,47 @@ export function Settings() {
               checked={theme === "dark"}
               onCheckedChange={toggleTheme}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Discord Integration */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Discord Integration</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Webhook URL</p>
+            <p className="text-xs text-muted-foreground">
+              Paste a Discord webhook URL to share optimization profiles directly to a channel.
+              Create one in Discord via Server Settings &gt; Integrations &gt; Webhooks.
+            </p>
+            <input
+              type="text"
+              value={discordWebhookUrl}
+              onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+              placeholder="https://discord.com/api/webhooks/..."
+              className="w-full h-8 rounded-lg border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={saveDiscordWebhook}
+                disabled={discordSaving}
+              >
+                {discordSaving ? "Saving..." : "Save"}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={testDiscordWebhook}
+                disabled={discordTesting || !discordWebhookUrl.trim()}
+              >
+                {discordTesting ? "Testing..." : "Test"}
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

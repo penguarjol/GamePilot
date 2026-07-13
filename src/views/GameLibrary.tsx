@@ -60,6 +60,36 @@ export function GameLibrary() {
       </section>
 
       <section className="space-y-3">
+        <h2 className="text-lg font-semibold tracking-tight">Other Games</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <GameCard
+            name="League of Legends"
+            description="Live game tracking and system performance"
+            game={games.data?.find((g) => g.name === "League of Legends") ?? null}
+            onNavigate={() => navigate("/league")}
+          />
+          <GameCard
+            name="RuneScape"
+            description="Player stats and Grand Exchange prices"
+            game={games.data?.find((g) => g.name === "RuneScape") ?? null}
+            onNavigate={() => navigate("/runescape")}
+          />
+          <GameCard
+            name="Path of Exile"
+            description="Currency exchange rates from poe.ninja"
+            game={games.data?.find((g) => g.name === "Path of Exile") ?? null}
+            onNavigate={() => navigate("/poe")}
+          />
+          <GameCard
+            name="Escape from Tarkov"
+            description="Ammo ballistics and flea market prices"
+            game={games.data?.find((g) => g.name === "Escape from Tarkov") ?? null}
+            onNavigate={() => navigate("/tarkov")}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
         <h2 className="text-lg font-semibold tracking-tight">Steam</h2>
         {steamGames.loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
@@ -117,6 +147,32 @@ function MinecraftCard({
         <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); onNavigate(); }}>
           View Details
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GameCard({
+  name,
+  description,
+  game,
+  onNavigate,
+}: {
+  name: string;
+  description: string;
+  game: GameInfo | null;
+  onNavigate: () => void;
+}) {
+  return (
+    <Card className="hover:border-primary/50 transition-colors cursor-pointer" onClick={onNavigate}>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{name}</CardTitle>
+        <Badge variant={game?.installed ? "default" : "secondary"}>
+          {game?.installed ? "Installed" : "Not Found"}
+        </Badge>
+      </CardHeader>
+      <CardContent>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </CardContent>
     </Card>
   );

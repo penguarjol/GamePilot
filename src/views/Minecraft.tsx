@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
 import { useInvoke } from "@/hooks/useInvoke";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,6 +42,7 @@ import type {
   ModVersion,
   ModFile,
   InstallResult,
+  OptimizationProfile,
 } from "@/types";
 
 export function Minecraft() {
@@ -67,6 +69,14 @@ export function Minecraft() {
   const [pendingInstall, setPendingInstall] = useState<{ mod: ModSearchResult; file: ModFile } | null>(null);
   const [installing, setInstalling] = useState(false);
   const [quickInstalling, setQuickInstalling] = useState<Record<string, boolean>>({});
+
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareProfileJson, setShareProfileJson] = useState("");
+  const [shareLoading, setShareLoading] = useState(false);
+  const [importJson, setImportJson] = useState("");
+  const [importedProfile, setImportedProfile] = useState<OptimizationProfile | null>(null);
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
+  const [discordSending, setDiscordSending] = useState(false);
 
   useEffect(() => {
     saved.execute();
@@ -427,6 +437,94 @@ export function Minecraft() {
     }
   };
 
+  const openShareDialog = async () => {
+    if (!selectedInstance) return;
+    setShareLoading(true);
+    setShareDialogOpen(true);
+    try {
+      const json = await invoke<string>("export_optimization_profile", {
+        instancePath: selectedInstance.path,
+        launcher: selectedInstance.launcher,
+      });
+      setShareProfileJson(json);
+    } catch (err) {
+      toast.error(`Failed to generate profile: ${err}`);
+      setShareProfileJson("");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const copyProfileToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(shareProfileJson);
+      toast.success("Profile copied to clipboard");
+    } catch {
+      toast.error("Failed to copy");
+    }
+  };
+
+  const saveProfileToFile = async () => {
+    try {
+      const filePath = await save({
+        defaultPath: `${selectedInstance?.name ?? "profile"}.gamepilot`,
+        filters: [{ name: "GamePilot Profile", extensions: ["gamepilot", "json"] }],
+      });
+      if (filePath) {
+        await writeTextFile(filePath, shareProfileJson);
+        toast.success("Profile saved");
+      }
+    } catch (err) {
+      toast.error(`Save failed: ${err}`);
+    }
+  };
+
+  const handleShareToDiscord = async () => {
+    if (!selectedInstance || !discordWebhookUrl.trim()) return;
+    setDiscordSending(true);
+    try {
+      await invoke("share_to_discord", {
+        webhookUrl: discordWebhookUrl.trim(),
+        instancePath: selectedInstance.path,
+        launcher: selectedInstance.launcher,
+      });
+      toast.success("Shared to Discord");
+    } catch (err) {
+      toast.error(`Discord share failed: ${err}`);
+    } finally {
+      setDiscordSending(false);
+    }
+  };
+
+  const handleImportFromText = async () => {
+    if (!importJson.trim()) return;
+    try {
+      const profile = await invoke<OptimizationProfile>("import_optimization_profile", {
+        json: importJson.trim(),
+      });
+      setImportedProfile(profile);
+    } catch (err) {
+      toast.error(`Import failed: ${err}`);
+    }
+  };
+
+  const handleImportFromFile = async () => {
+    try {
+      const filePath = await open({
+        filters: [{ name: "GamePilot Profile", extensions: ["gamepilot", "json"] }],
+      });
+      if (!filePath) return;
+      const content = await readTextFile(filePath as string);
+      const profile = await invoke<OptimizationProfile>("import_optimization_profile", {
+        json: content,
+      });
+      setImportJson(content);
+      setImportedProfile(profile);
+    } catch (err) {
+      toast.error(`Import failed: ${err}`);
+    }
+  };
+
   const parseJvmActionData = (actionData: string) => {
     let xmxMb: number | undefined;
     let xmsMb: number | undefined;
@@ -592,6 +690,9 @@ export function Minecraft() {
                     <div className="flex gap-2 shrink-0">
                       <Button variant="secondary" onClick={analyzeInstance} disabled={!!loading}>
                         Analyze
+                      </Button>
+                      <Button variant="secondary" onClick={openShareDialog} disabled={!!loading}>
+                        Share
                       </Button>
                       <Button onClick={handleLaunchClick} disabled={!!loading}>
                         Launch
@@ -978,6 +1079,127 @@ export function Minecraft() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Share Dialog */}
+              <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+                <DialogContent className="sm:max-w-xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Share Optimization Profile</DialogTitle>
+                    <DialogDescription>
+                      Export or import optimization profiles for {selectedInstance?.name}.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <Tabs defaultValue="export">
+                    <TabsList>
+                      <TabsTrigger value="export">Export</TabsTrigger>
+                      <TabsTrigger value="import">Import</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="export" className="mt-4 space-y-4">
+                      {shareLoading ? (
+                        <p className="text-sm text-muted-foreground">Generating profile...</p>
+                      ) : shareProfileJson ? (
+                        <>
+                          <pre className="max-h-48 overflow-auto rounded-lg border border-border bg-muted/50 p-3 text-xs font-mono">
+                            {shareProfileJson}
+                          </pre>
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={copyProfileToClipboard}>
+                              Copy to Clipboard
+                            </Button>
+                            <Button size="sm" variant="secondary" onClick={saveProfileToFile}>
+                              Save as File
+                            </Button>
+                          </div>
+                          <div className="space-y-2 pt-2 border-t border-border">
+                            <h4 className="text-sm font-medium">Share to Discord</h4>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={discordWebhookUrl}
+                                onChange={(e) => setDiscordWebhookUrl(e.target.value)}
+                                placeholder="Discord webhook URL"
+                                className="flex-1 h-8 rounded-lg border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                              />
+                              <Button
+                                size="sm"
+                                onClick={handleShareToDiscord}
+                                disabled={discordSending || !discordWebhookUrl.trim()}
+                              >
+                                {discordSending ? "Sending..." : "Send"}
+                              </Button>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No profile data available.
+                        </p>
+                      )}
+                    </TabsContent>
+                    <TabsContent value="import" className="mt-4 space-y-4">
+                      <div className="space-y-2">
+                        <textarea
+                          value={importJson}
+                          onChange={(e) => setImportJson(e.target.value)}
+                          placeholder="Paste a .gamepilot JSON profile here..."
+                          className="w-full h-32 rounded-lg border border-border bg-background px-3 py-2 text-xs font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={handleImportFromText}
+                            disabled={!importJson.trim()}
+                          >
+                            Parse
+                          </Button>
+                          <Button size="sm" variant="secondary" onClick={handleImportFromFile}>
+                            Browse for File
+                          </Button>
+                        </div>
+                      </div>
+                      {importedProfile && (
+                        <div className="rounded-lg border border-border p-3 space-y-2">
+                          <h4 className="text-sm font-medium">Imported Profile</h4>
+                          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                            <dt className="text-muted-foreground">Instance</dt>
+                            <dd>{importedProfile.instance_name}</dd>
+                            <dt className="text-muted-foreground">Version</dt>
+                            <dd>{importedProfile.minecraft_version ?? "Unknown"}</dd>
+                            <dt className="text-muted-foreground">Loader</dt>
+                            <dd>{importedProfile.loader ?? "None"}</dd>
+                            {importedProfile.health_score != null && (
+                              <>
+                                <dt className="text-muted-foreground">Health</dt>
+                                <dd>{importedProfile.health_score}/100</dd>
+                              </>
+                            )}
+                            {importedProfile.jvm_settings?.xmx_mb != null && (
+                              <>
+                                <dt className="text-muted-foreground">RAM</dt>
+                                <dd>{importedProfile.jvm_settings.xmx_mb} MB</dd>
+                              </>
+                            )}
+                          </dl>
+                          {importedProfile.recommended_mods.length > 0 && (
+                            <div className="space-y-1">
+                              <span className="text-xs text-muted-foreground">
+                                Recommended mods ({importedProfile.recommended_mods.length}):
+                              </span>
+                              <div className="flex flex-wrap gap-1">
+                                {importedProfile.recommended_mods.map((m) => (
+                                  <Badge key={m.name} variant="secondary">
+                                    {m.name}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+                </DialogContent>
+              </Dialog>
 
               {/* Pre-launch confirmation dialog */}
               <Dialog open={preLaunchOpen} onOpenChange={setPreLaunchOpen}>

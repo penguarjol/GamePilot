@@ -11,6 +11,7 @@ pub mod minecraft;
 pub mod platform;
 pub mod recommendations;
 pub mod sessions;
+pub mod sharing;
 pub mod telemetry;
 
 use db::Database;
@@ -170,6 +171,67 @@ async fn get_modpack_health(
     .map_err(|e| e.to_string())
 }
 
+// --- League of Legends ---
+
+#[tauri::command]
+async fn check_league_game_active() -> Result<bool, String> {
+    Ok(games::league::is_game_active().await)
+}
+
+#[tauri::command]
+async fn get_league_live_data() -> Result<serde_json::Value, String> {
+    games::league::get_all_game_data().await
+}
+
+// --- Path of Exile ---
+
+#[tauri::command]
+async fn get_poe_currency_prices(
+    league: String,
+) -> Result<Vec<games::poe::CurrencyPrice>, String> {
+    games::poe::fetch_currency_prices(&league).await
+}
+
+#[tauri::command]
+async fn discover_poe_instances() -> Result<Vec<gamemodule::GameInstance>, String> {
+    tokio::task::spawn_blocking(|| {
+        use gamemodule::GameModule;
+        let poe = games::poe::PoeModule;
+        poe.discover_instances()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+// --- RuneScape ---
+
+#[tauri::command]
+async fn lookup_runescape_player(
+    username: String,
+    game: String,
+) -> Result<games::runescape::PlayerStats, String> {
+    games::runescape::lookup_player(&username, &game).await
+}
+
+#[tauri::command]
+async fn lookup_ge_price(item_id: u32) -> Result<games::runescape::GrandExchangeItem, String> {
+    games::runescape::lookup_ge_price(item_id).await
+}
+
+#[tauri::command]
+async fn discover_runescape_instances() -> Result<Vec<gamemodule::GameInstance>, String> {
+    tokio::task::spawn_blocking(|| {
+        use gamemodule::GameModule;
+        let osrs = games::runescape::OsrsModule;
+        let rs3 = games::runescape::Rs3Module;
+        let mut instances = osrs.discover_instances();
+        instances.extend(rs3.discover_instances());
+        instances
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 // --- Game Library ---
 
 #[tauri::command]
@@ -177,7 +239,12 @@ async fn discover_all_games() -> Result<Vec<gamemodule::GameInfo>, String> {
     tokio::task::spawn_blocking(|| {
         use gamemodule::GameModule;
         let steam = games::steam::SteamModule;
-        let mut infos = vec![steam.game_info()];
+        let league = games::league::LeagueModule;
+        let poe = games::poe::PoeModule;
+        let tarkov = games::tarkov::TarkovModule;
+        let osrs = games::runescape::OsrsModule;
+        let rs3 = games::runescape::Rs3Module;
+        let mut infos = vec![steam.game_info(), league.game_info(), poe.game_info(), tarkov.game_info(), osrs.game_info(), rs3.game_info()];
         infos.insert(
             0,
             gamemodule::GameInfo {
@@ -203,6 +270,18 @@ async fn discover_steam_games() -> Result<Vec<gamemodule::GameInstance>, String>
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+// --- Tarkov ---
+
+#[tauri::command]
+async fn get_tarkov_ammo_data() -> Result<Vec<games::tarkov::AmmoData>, String> {
+    games::tarkov::fetch_ammo_data().await
+}
+
+#[tauri::command]
+async fn search_tarkov_item(name: String) -> Result<Vec<games::tarkov::ItemPrice>, String> {
+    games::tarkov::search_items(&name).await
 }
 
 // --- Recommendations ---
@@ -1090,6 +1169,98 @@ fn apply_config_change_auto(
     Ok(rp)
 }
 
+// --- Sharing ---
+
+#[tauri::command]
+async fn export_optimization_profile(
+    instance_path: String,
+    launcher: String,
+) -> Result<String, String> {
+    let path_clone = instance_path.clone();
+    let launcher_clone = launcher.clone();
+    tokio::task::spawn_blocking(move || {
+        let instance = minecraft::instance::parse_instance(
+            std::path::Path::new(&path_clone),
+            &launcher_clone,
+        );
+        let hw = hardware::collect_hardware_info();
+        let mod_analysis = instance
+            .mods_path
+            .as_ref()
+            .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
+        let recs =
+            minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref());
+
+        let health = instance
+            .mods_path
+            .as_ref()
+            .map(|p| {
+                let analysis =
+                    minecraft::mods::analyze_mods(p, instance.loader_type.as_deref());
+                minecraft::health::score_modpack_health(&analysis, false)
+            });
+
+        let profile = sharing::generate_profile(
+            &instance,
+            &recs,
+            health.map(|h| h.overall_score),
+        );
+        sharing::export_profile(&profile)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn import_optimization_profile(
+    json: String,
+) -> Result<sharing::OptimizationProfile, String> {
+    sharing::import_profile(&json)
+}
+
+#[tauri::command]
+async fn share_to_discord(
+    webhook_url: String,
+    instance_path: String,
+    launcher: String,
+) -> Result<(), String> {
+    let path_clone = instance_path.clone();
+    let launcher_clone = launcher.clone();
+    let profile = tokio::task::spawn_blocking(move || {
+        let instance = minecraft::instance::parse_instance(
+            std::path::Path::new(&path_clone),
+            &launcher_clone,
+        );
+        let hw = hardware::collect_hardware_info();
+        let mod_analysis = instance
+            .mods_path
+            .as_ref()
+            .map(|p| minecraft::mods::analyze_mods(p, instance.loader_type.as_deref()));
+        let recs =
+            minecraft::rules::generate_recommendations(&hw, &instance, mod_analysis.as_ref());
+
+        let health = instance
+            .mods_path
+            .as_ref()
+            .map(|p| {
+                let analysis =
+                    minecraft::mods::analyze_mods(p, instance.loader_type.as_deref());
+                minecraft::health::score_modpack_health(&analysis, false)
+            });
+
+        sharing::generate_profile(&instance, &recs, health.map(|h| h.overall_score))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    sharing::send_to_discord(&webhook_url, &profile).await
+}
+
+#[tauri::command]
+async fn test_discord_webhook(webhook_url: String) -> Result<(), String> {
+    sharing::send_test_to_discord(&webhook_url).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -1124,6 +1295,13 @@ pub fn run() {
             get_governor_status,
             discover_all_games,
             discover_steam_games,
+            check_league_game_active,
+            get_league_live_data,
+            get_poe_currency_prices,
+            discover_poe_instances,
+            lookup_runescape_player,
+            lookup_ge_price,
+            discover_runescape_instances,
             discover_launchers,
             discover_all_instances,
             scan_instance,
@@ -1165,6 +1343,12 @@ pub fn run() {
             install_modrinth_mod,
             remove_mod,
             enable_mod,
+            get_tarkov_ammo_data,
+            search_tarkov_item,
+            export_optimization_profile,
+            import_optimization_profile,
+            share_to_discord,
+            test_discord_webhook,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -318,6 +318,40 @@ export interface TelemetrySummary {
   hog_count: number | null;
 }
 
+export interface OptimizationProfile {
+  version: string;
+  created_at: string;
+  game: string;
+  instance_name: string;
+  minecraft_version: string | null;
+  loader: string | null;
+  jvm_settings: JvmProfile | null;
+  config_changes: ProfileConfigChange[];
+  recommended_mods: ProfileRecommendedMod[];
+  health_score: number | null;
+  hardware_summary: string | null;
+}
+
+export interface JvmProfile {
+  xmx_mb: number | null;
+  xms_mb: number | null;
+  jvm_args: string | null;
+  java_version: string | null;
+}
+
+export interface ProfileConfigChange {
+  file: string;
+  key: string;
+  value: string;
+  reason: string;
+}
+
+export interface ProfileRecommendedMod {
+  name: string;
+  modrinth_slug: string | null;
+  reason: string;
+}
+
 export interface GameInfo {
   id: string;
   name: string;
@@ -333,4 +367,40 @@ export interface SteamGameInstance {
   path: string;
   version: string | null;
   last_played: string | null;
+}
+
+export interface PlayerStats {
+  username: string;
+  skills: SkillLevel[];
+  total_level: number;
+  total_xp: number;
+}
+
+export interface SkillLevel {
+  name: string;
+  level: number;
+  xp: number;
+  rank: number;
+}
+
+export interface CurrencyPrice {
+  name: string;
+  chaos_equivalent: number;
+  change_percent: number;
+}
+
+export interface AmmoData {
+  name: string;
+  short_name: string;
+  caliber: string;
+  damage: number;
+  penetration: number;
+  armor_damage: number;
+}
+
+export interface ItemPrice {
+  name: string;
+  short_name: string;
+  avg_24h_price: number;
+  last_low_price: number;
 }

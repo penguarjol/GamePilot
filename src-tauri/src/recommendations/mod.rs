@@ -1,7 +1,7 @@
 use crate::db::Database;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RollbackPoint {
@@ -11,6 +11,17 @@ pub struct RollbackPoint {
     pub original_hash: String,
     pub backup_path: String,
     pub created_at: String,
+}
+
+pub fn resolve_config_path(instance_path: &Path, filename: &str) -> PathBuf {
+    let mc_dir = if instance_path.join(".minecraft").exists() {
+        instance_path.join(".minecraft")
+    } else if instance_path.join("minecraft").exists() {
+        instance_path.join("minecraft")
+    } else {
+        instance_path.to_path_buf()
+    };
+    mc_dir.join(filename)
 }
 
 pub fn backup_file(file_path: &Path, recommendation_id: &str) -> Result<RollbackPoint, String> {

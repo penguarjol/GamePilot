@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::path::{Path, PathBuf};
+
+fn instance_id_from_path(path: &Path) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    let hash = hasher.finalize();
+    format!("inst-{}", hex::encode(&hash[..12]))
+}
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct MinecraftInstance {
@@ -34,7 +42,7 @@ struct MmcComponent {
 }
 
 pub fn parse_instance(path: &Path, launcher: &str) -> MinecraftInstance {
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = instance_id_from_path(path);
     let name = path
         .file_name()
         .unwrap_or_default()

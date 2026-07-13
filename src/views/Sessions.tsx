@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Session, SessionReport, TelemetrySample } from "@/types";
+import type { Session, SessionReport, TelemetrySample, Recommendation } from "@/types";
 
 export function Sessions() {
   const sessions = useInvoke<Session[]>("get_sessions");
@@ -80,16 +80,53 @@ export function Sessions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveSession]);
 
+  const [previousSession, setPreviousSession] = useState<Session | null>(null);
+  const [nextSteps, setNextSteps] = useState<string[]>([]);
+
   const selectSession = async (session: Session) => {
     setSelectedSession(session);
     setReport(null);
     setReportError(null);
     setReportLoading(true);
+    setPreviousSession(null);
+    setNextSteps([]);
     try {
       const r = await invoke<SessionReport>("get_session_report", {
         sessionId: session.id,
       });
       setReport(r);
+
+      const allSessions = sessions.data ?? [];
+      const instanceSessions = allSessions
+        .filter((s) => s.instance_id === session.instance_id && s.id !== session.id)
+        .sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+      const sessionTime = new Date(session.started_at).getTime();
+      const prev = instanceSessions.find(
+        (s) => new Date(s.started_at).getTime() < sessionTime
+      );
+      setPreviousSession(prev ?? null);
+
+      const steps: string[] = [];
+      if (r.session.cpu_avg_percent != null && r.session.cpu_avg_percent > 70) {
+        steps.push("Consider closing background applications before next session");
+      }
+      if (r.session.duration_secs != null && r.session.duration_secs < 600) {
+        steps.push(
+          `Session lasted only ${formatDuration(r.session.duration_secs)} — check for crashes in Minecraft logs`
+        );
+      }
+      try {
+        const recs = await invoke<Recommendation[]>("get_recommendations_for_path", {
+          instancePath: "",
+          launcher: "Custom",
+        }).catch(() => [] as Recommendation[]);
+        if (recs.length > 0 && r.recommendations_applied === 0) {
+          steps.push(`You have ${recs.length} unreviewed recommendations for this instance`);
+        }
+      } catch {
+        // non-fatal
+      }
+      setNextSteps(steps);
     } catch (err) {
       setReportError(String(err));
     } finally {
@@ -284,6 +321,83 @@ export function Sessions() {
                     <dt className="text-muted-foreground">Observations</dt>
                     <dd>{report.process_observations}</dd>
                   </dl>
+
+                  {/* Session Comparison */}
+                  {previousSession && (
+                    <div className="border-t border-border pt-3 space-y-2">
+                      <h4 className="text-sm font-medium">Compared to Previous Session</h4>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Metric</TableHead>
+                            <TableHead>This Session</TableHead>
+                            <TableHead>Previous</TableHead>
+                            <TableHead>Change</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {report.session.cpu_avg_percent != null && previousSession.cpu_avg_percent != null && (
+                            <TableRow>
+                              <TableCell className="text-muted-foreground">CPU avg</TableCell>
+                              <TableCell>{report.session.cpu_avg_percent.toFixed(1)}%</TableCell>
+                              <TableCell>{previousSession.cpu_avg_percent.toFixed(1)}%</TableCell>
+                              <TableCell>
+                                <MetricDelta
+                                  current={report.session.cpu_avg_percent}
+                                  previous={previousSession.cpu_avg_percent}
+                                  lowerIsBetter
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {report.session.ram_avg_mb != null && previousSession.ram_avg_mb != null && (
+                            <TableRow>
+                              <TableCell className="text-muted-foreground">RAM avg</TableCell>
+                              <TableCell>{report.session.ram_avg_mb.toFixed(0)} MB</TableCell>
+                              <TableCell>{previousSession.ram_avg_mb.toFixed(0)} MB</TableCell>
+                              <TableCell>
+                                <MetricDelta
+                                  current={report.session.ram_avg_mb}
+                                  previous={previousSession.ram_avg_mb}
+                                  lowerIsBetter
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {report.session.duration_secs != null && previousSession.duration_secs != null && (
+                            <TableRow>
+                              <TableCell className="text-muted-foreground">Duration</TableCell>
+                              <TableCell>{formatDuration(report.session.duration_secs)}</TableCell>
+                              <TableCell>{formatDuration(previousSession.duration_secs)}</TableCell>
+                              <TableCell>
+                                <MetricDelta
+                                  current={report.session.duration_secs}
+                                  previous={previousSession.duration_secs}
+                                  lowerIsBetter={false}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+
+                  {/* Actionable Next Steps */}
+                  {nextSteps.length > 0 && (
+                    <div className="border-t border-border pt-3 space-y-2">
+                      <h4 className="text-sm font-medium">Next Steps</h4>
+                      <ul className="space-y-1.5">
+                        {nextSteps.map((step, i) => (
+                          <li key={i} className="text-sm text-muted-foreground flex gap-2">
+                            <span className="shrink-0 text-foreground font-medium">{"\u2022"}</span>
+                            {step}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   <div className="border-t border-border pt-3">
                     <p className="text-sm"><strong>Summary:</strong> {report.summary}</p>
                   </div>
@@ -314,4 +428,24 @@ function formatDuration(secs: number): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+function MetricDelta({
+  current,
+  previous,
+  lowerIsBetter,
+}: {
+  current: number;
+  previous: number;
+  lowerIsBetter: boolean;
+}) {
+  if (previous === 0) return <span className="text-xs text-muted-foreground">-</span>;
+  const pctChange = Math.round(((current - previous) / previous) * 100);
+  const isImproved = lowerIsBetter ? pctChange < 0 : pctChange > 0;
+  const label = pctChange > 0 ? `+${pctChange}%` : `${pctChange}%`;
+  return (
+    <span className={`text-xs font-medium ${isImproved ? "text-green-500" : pctChange === 0 ? "text-muted-foreground" : "text-destructive"}`}>
+      {label}
+    </span>
+  );
 }

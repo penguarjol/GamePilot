@@ -138,7 +138,7 @@ pub fn collect_hardware_info() -> HardwareInfo {
     }
 }
 
-pub fn collect_process_info() -> Vec<ProcessInfo> {
+pub fn collect_process_info(ignore_patterns: &[String]) -> Vec<ProcessInfo> {
     let mut sys = System::new_all();
     sys.refresh_all();
     std::thread::sleep(std::time::Duration::from_millis(200));
@@ -166,6 +166,13 @@ pub fn collect_process_info() -> Vec<ProcessInfo> {
         })
         .filter(|p| p.ram_mb > 50.0 || p.cpu_percent > 1.0)
         .collect();
+
+    processes.retain(|p| {
+        let lower = p.name.to_lowercase();
+        !ignore_patterns
+            .iter()
+            .any(|pattern| lower.contains(&pattern.to_lowercase()))
+    });
 
     processes.sort_by(|a, b| {
         b.ram_mb

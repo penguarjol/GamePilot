@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useInvoke } from "@/hooks/useInvoke";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,7 @@ function Skeleton({ className = "" }: { className?: string }) {
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const hw = useInvoke<HardwareInfo>("get_hardware_info");
   const procs = useInvoke<ProcessInfo[]>("get_process_info");
   const launchers = useInvoke<DiscoveredLauncher[]>("discover_launchers");
@@ -64,6 +66,20 @@ export function Dashboard() {
           {hw.loading || procs.loading ? "Scanning..." : "Run Diagnostics"}
         </Button>
       </div>
+
+      {sessions.data?.some((s) => s.status === "active") && (
+        <Card className="border-primary bg-primary/10 mb-4">
+          <CardContent className="flex items-center justify-between py-3">
+            <div className="flex items-center gap-2">
+              <Badge variant="default">LIVE</Badge>
+              <span className="text-sm">Gaming session in progress</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navigate("/sessions")}>
+              View Session
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* System Health */}

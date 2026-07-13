@@ -10,6 +10,8 @@ import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -33,6 +35,8 @@ import type {
   ConfigAnalysis,
   ConfigRecommendation,
   ModpackHealth,
+  RollbackPoint,
+  ProcessInfo,
 } from "@/types";
 
 export function Minecraft() {
@@ -48,6 +52,9 @@ export function Minecraft() {
   const [discovered, setDiscovered] = useState<DiscoveredInstance[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [recStatusMap, setRecStatusMap] = useState<Record<string, string>>({});
+  const [appliedChanges, setAppliedChanges] = useState<RollbackPoint[]>([]);
+  const [preLaunchOpen, setPreLaunchOpen] = useState(false);
+  const [resourceHogs, setResourceHogs] = useState<ProcessInfo[]>([]);
 
   useEffect(() => {
     saved.execute();
@@ -218,13 +225,14 @@ export function Minecraft() {
   const applyConfig = async (cr: ConfigRecommendation) => {
     if (!selectedInstance) return;
     try {
-      const targetPath = `${selectedInstance.path}/.minecraft/${cr.file}`;
-      await invoke("apply_config_change", {
-        filePath: targetPath,
+      const rp = await invoke<RollbackPoint>("apply_config_change_auto", {
+        instancePath: selectedInstance.path,
+        filename: cr.file,
         key: cr.key,
         newValue: cr.recommended_value,
         recommendationId: `config-${cr.key}`,
       });
+      setAppliedChanges((prev) => [...prev, rp]);
       toast.success(`Applied: ${cr.key} = ${cr.recommended_value}`);
       const config = await invoke<ConfigAnalysis>("analyze_configs", {
         instancePath: selectedInstance.path,
@@ -232,7 +240,42 @@ export function Minecraft() {
       });
       setConfigAnalysis(config);
     } catch (err) {
-      toast.error(`Failed to apply: ${err}`);
+      toast.error(`Failed: ${err}`);
+    }
+  };
+
+  const rollbackChange = async (rp: RollbackPoint) => {
+    if (!selectedInstance) return;
+    try {
+      await invoke("rollback_file", { rollbackJson: JSON.stringify(rp) });
+      setAppliedChanges((prev) => prev.filter((c) => c.id !== rp.id));
+      toast.success(`Rolled back: ${rp.file_path}`);
+      const config = await invoke<ConfigAnalysis>("analyze_configs", {
+        instancePath: selectedInstance.path,
+        modCount: selectedInstance.mod_count,
+      });
+      setConfigAnalysis(config);
+    } catch (err) {
+      toast.error(`Rollback failed: ${err}`);
+    }
+  };
+
+  const handleLaunchClick = async () => {
+    if (!selectedInstance) return;
+    const unaddressedRecs = recommendations.filter((r) => !recStatusMap[r.id]).slice(0, 3);
+    let hogs: ProcessInfo[] = [];
+    try {
+      const procs = await invoke<ProcessInfo[]>("get_process_info");
+      hogs = procs.filter((p) => p.is_resource_hog);
+      setResourceHogs(hogs);
+    } catch {
+      setResourceHogs([]);
+    }
+
+    if (unaddressedRecs.length > 0 || hogs.length > 0) {
+      setPreLaunchOpen(true);
+    } else {
+      await launchInstance();
     }
   };
 
@@ -361,7 +404,7 @@ export function Minecraft() {
                       <Button variant="secondary" onClick={analyzeInstance} disabled={!!loading}>
                         Analyze
                       </Button>
-                      <Button onClick={launchInstance} disabled={!!loading}>
+                      <Button onClick={handleLaunchClick} disabled={!!loading}>
                         Launch
                       </Button>
                     </div>
@@ -559,6 +602,107 @@ export function Minecraft() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Applied Changes (Rollback) */}
+              {appliedChanges.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Applied Changes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>File</TableHead>
+                          <TableHead>Applied</TableHead>
+                          <TableHead className="text-right">Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {appliedChanges.map((rp) => (
+                          <TableRow key={rp.id}>
+                            <TableCell className="font-mono text-xs">{rp.file_path}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {new Date(rp.created_at).toLocaleString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button size="sm" variant="destructive" onClick={() => rollbackChange(rp)}>
+                                Rollback
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Pre-launch confirmation dialog */}
+              <Dialog open={preLaunchOpen} onOpenChange={setPreLaunchOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Review Before Launch</DialogTitle>
+                    <DialogDescription>
+                      There are unresolved items that may affect performance.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    {recommendations.filter((r) => !recStatusMap[r.id]).length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Unaddressed Recommendations</h4>
+                        {recommendations
+                          .filter((r) => !recStatusMap[r.id])
+                          .slice(0, 3)
+                          .map((r) => (
+                            <div key={r.id} className="rounded-lg border border-border p-2 text-sm">
+                              <div className="flex gap-1.5 mb-1">
+                                <Badge variant={r.severity === "error" ? "destructive" : "secondary"}>{r.severity}</Badge>
+                              </div>
+                              <span>{r.title}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                    {resourceHogs.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Resource Hogs Detected</h4>
+                        {resourceHogs.slice(0, 3).map((p) => (
+                          <div key={p.pid} className="flex items-center justify-between text-sm rounded-lg border border-border p-2">
+                            <span className="font-mono">{p.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {p.cpu_percent.toFixed(0)}% CPU / {p.ram_mb.toFixed(0)} MB
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setPreLaunchOpen(false);
+                      }}
+                    >
+                      Review Recommendations
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setPreLaunchOpen(false);
+                        launchInstance();
+                      }}
+                    >
+                      Launch Anyway
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
             </>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">

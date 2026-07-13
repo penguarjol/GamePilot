@@ -27,8 +27,23 @@ async fn get_hardware_info() -> Result<hardware::HardwareInfo, String> {
 }
 
 #[tauri::command]
-async fn get_process_info() -> Result<Vec<hardware::ProcessInfo>, String> {
-    tokio::task::spawn_blocking(hardware::collect_process_info)
+async fn get_process_info(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<hardware::ProcessInfo>, String> {
+    let ignore_patterns: Vec<String> = {
+        let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let conn = app.db.conn();
+        let mut stmt = conn
+            .prepare("SELECT pattern FROM ignore_rules WHERE rule_type = 'process'")
+            .map_err(|e| format!("DB error: {}", e))?;
+        let results: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        results
+    };
+    tokio::task::spawn_blocking(move || hardware::collect_process_info(&ignore_patterns))
         .await
         .map_err(|e| e.to_string())
 }
@@ -262,9 +277,10 @@ async fn get_recommendations_for_path(
     launcher: String,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<Vec<minecraft::rules::Recommendation>, String> {
+    let path_clone = instance_path.clone();
     let recs = tokio::task::spawn_blocking(move || {
         let instance = minecraft::instance::parse_instance(
-            std::path::Path::new(&instance_path),
+            std::path::Path::new(&path_clone),
             &launcher,
         );
         let hw = hardware::collect_hardware_info();
@@ -277,16 +293,24 @@ async fn get_recommendations_for_path(
     .await
     .map_err(|e| e.to_string())?;
 
+    let instance_id = {
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(instance_path.as_bytes());
+        let hash = hasher.finalize();
+        format!("inst-{}", hex::encode(&hash[..12]))
+    };
+
     if let Ok(app) = state.lock() {
         let conn = app.db.conn();
         for rec in &recs {
             conn.execute(
                 "INSERT OR IGNORE INTO recommendations \
-                 (id, category, severity, confidence, title, description, evidence, \
+                 (id, instance_id, category, severity, confidence, title, description, evidence, \
                   expected_impact, risk_level, action_type, action_data, status) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'new')",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'new')",
                 rusqlite::params![
-                    rec.id, rec.category, rec.severity, rec.confidence,
+                    rec.id, instance_id, rec.category, rec.severity, rec.confidence,
                     rec.title, rec.description, rec.evidence, rec.expected_impact,
                     rec.risk_level, rec.action_type, rec.action_data,
                 ],
@@ -565,6 +589,23 @@ fn apply_config_change(
     )
 }
 
+#[tauri::command]
+fn apply_config_change_auto(
+    instance_path: String,
+    filename: String,
+    key: String,
+    new_value: String,
+    recommendation_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<recommendations::RollbackPoint, String> {
+    let resolved = recommendations::resolve_config_path(
+        std::path::Path::new(&instance_path),
+        &filename,
+    );
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    recommendations::apply_config_change(&resolved, &key, &new_value, &recommendation_id, &app.db)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -623,6 +664,7 @@ pub fn run() {
             get_preference,
             set_preference,
             apply_config_change,
+            apply_config_change_auto,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

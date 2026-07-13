@@ -1,8 +1,20 @@
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::hardware::HardwareInfo;
 use crate::minecraft::instance::MinecraftInstance;
 use crate::minecraft::mods::ModAnalysis;
+
+fn deterministic_id(category: &str, title: &str, instance_path: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(category.as_bytes());
+    hasher.update(b"|");
+    hasher.update(title.as_bytes());
+    hasher.update(b"|");
+    hasher.update(instance_path.as_bytes());
+    let hash = hasher.finalize();
+    format!("rec-{}", hex::encode(&hash[..12]))
+}
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Recommendation {
@@ -25,14 +37,15 @@ pub fn generate_recommendations(
     mod_analysis: Option<&ModAnalysis>,
 ) -> Vec<Recommendation> {
     let mut recs = Vec::new();
+    let inst_path = instance.path.to_string_lossy().to_string();
 
-    generate_ram_recommendation(hw, instance, &mut recs);
-    generate_jvm_flag_recommendations(instance, &mut recs);
-    generate_java_version_recommendation(instance, &mut recs);
+    generate_ram_recommendation(hw, instance, &inst_path, &mut recs);
+    generate_jvm_flag_recommendations(instance, &inst_path, &mut recs);
+    generate_java_version_recommendation(instance, &inst_path, &mut recs);
 
     if let Some(analysis) = mod_analysis {
-        generate_performance_mod_recommendations(analysis, &mut recs);
-        generate_mod_count_recommendation(analysis, &mut recs);
+        generate_performance_mod_recommendations(analysis, &inst_path, &mut recs);
+        generate_mod_count_recommendation(analysis, &inst_path, &mut recs);
     }
 
     recs
@@ -41,6 +54,7 @@ pub fn generate_recommendations(
 fn generate_ram_recommendation(
     hw: &HardwareInfo,
     instance: &MinecraftInstance,
+    inst_path: &str,
     recs: &mut Vec<Recommendation>,
 ) {
     let total_ram_gb = hw.ram_total_mb as f64 / 1024.0;
@@ -85,7 +99,7 @@ fn generate_ram_recommendation(
     }
 
     recs.push(Recommendation {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: deterministic_id("java_jvm", &title, inst_path),
         category: "java_jvm".to_string(),
         severity,
         confidence: "high".to_string(),
@@ -122,16 +136,17 @@ fn recommend_xmx_mb(total_ram_mb: u64, mod_count: usize) -> u32 {
     }
 }
 
-fn generate_jvm_flag_recommendations(instance: &MinecraftInstance, recs: &mut Vec<Recommendation>) {
+fn generate_jvm_flag_recommendations(instance: &MinecraftInstance, inst_path: &str, recs: &mut Vec<Recommendation>) {
     let current_args = instance.jvm_args.as_deref().unwrap_or("");
 
     if !current_args.contains("UseG1GC") && !current_args.contains("UseShenandoahGC") && !current_args.contains("UseZGC") {
+        let title = "Add optimized GC flags for Minecraft";
         recs.push(Recommendation {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: deterministic_id("java_jvm", title, inst_path),
             category: "java_jvm".to_string(),
             severity: "info".to_string(),
             confidence: "high".to_string(),
-            title: "Add optimized GC flags for Minecraft".to_string(),
+            title: title.to_string(),
             description: "G1GC with tuned parameters reduces GC pause times \
                           and improves frame time consistency."
                 .to_string(),
@@ -146,6 +161,7 @@ fn generate_jvm_flag_recommendations(instance: &MinecraftInstance, recs: &mut Ve
 
 fn generate_java_version_recommendation(
     instance: &MinecraftInstance,
+    inst_path: &str,
     recs: &mut Vec<Recommendation>,
 ) {
     let mc_version = instance.minecraft_version.as_deref().unwrap_or("");
@@ -158,12 +174,13 @@ fn generate_java_version_recommendation(
     let is_neoforge = loader.to_lowercase().contains("neoforge");
 
     if needs_java_21 || is_neoforge {
+        let title = "Ensure Java 21 is installed";
         recs.push(Recommendation {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: deterministic_id("java_jvm", title, inst_path),
             category: "java_jvm".to_string(),
             severity: "warning".to_string(),
             confidence: "high".to_string(),
-            title: "Ensure Java 21 is installed".to_string(),
+            title: title.to_string(),
             description: format!(
                 "Minecraft {} with {} requires Java 21. \
                  Using an older version will cause crashes or compatibility issues.",
@@ -183,15 +200,17 @@ fn generate_java_version_recommendation(
 
 fn generate_performance_mod_recommendations(
     analysis: &ModAnalysis,
+    inst_path: &str,
     recs: &mut Vec<Recommendation>,
 ) {
     for missing in &analysis.missing_performance_mods {
+        let title = format!("{} is not installed", missing.mod_name);
         recs.push(Recommendation {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: deterministic_id("modpack", &title, inst_path),
             category: "modpack".to_string(),
             severity: "info".to_string(),
             confidence: missing.confidence.clone(),
-            title: format!("{} is not installed", missing.mod_name),
+            title,
             description: missing.reason.clone(),
             evidence: format!(
                 "Scanned {} mods, {} not found in mod list",
@@ -205,14 +224,15 @@ fn generate_performance_mod_recommendations(
     }
 }
 
-fn generate_mod_count_recommendation(analysis: &ModAnalysis, recs: &mut Vec<Recommendation>) {
+fn generate_mod_count_recommendation(analysis: &ModAnalysis, inst_path: &str, recs: &mut Vec<Recommendation>) {
     if analysis.total_mods > 200 {
+        let title = format!("Heavy modpack detected ({} mods)", analysis.total_mods);
         recs.push(Recommendation {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: deterministic_id("modpack", &title, inst_path),
             category: "modpack".to_string(),
             severity: "warning".to_string(),
             confidence: "medium".to_string(),
-            title: format!("Heavy modpack detected ({} mods)", analysis.total_mods),
+            title,
             description: format!(
                 "This instance has {} mods totaling {:.0} MB. \
                  Large modpacks require more RAM and may benefit from \
@@ -229,6 +249,49 @@ fn generate_mod_count_recommendation(analysis: &ModAnalysis, recs: &mut Vec<Reco
             action_data: None,
         });
     }
+}
+
+pub fn generate_process_recommendations(
+    processes: &[crate::hardware::ProcessInfo],
+) -> Vec<Recommendation> {
+    processes
+        .iter()
+        .filter(|p| p.is_resource_hog)
+        .map(|p| {
+            let impact_estimate = if p.ram_mb > 2000.0 {
+                "High — freeing significant RAM for Minecraft"
+            } else if p.ram_mb > 500.0 {
+                "Medium — moderate RAM savings"
+            } else {
+                "Low — minor resource savings"
+            };
+            let title = format!("{} is using significant resources", p.name);
+            Recommendation {
+                id: deterministic_id("background_process", &p.name, "system"),
+                category: "background_process".to_string(),
+                severity: if p.ram_mb > 1000.0 || p.cpu_percent > 10.0 {
+                    "warning"
+                } else {
+                    "info"
+                }
+                .to_string(),
+                confidence: "high".to_string(),
+                title,
+                description: format!(
+                    "{}: {:.0} MB RAM, {:.1}% CPU. {}",
+                    p.category, p.ram_mb, p.cpu_percent, p.recommendation
+                ),
+                evidence: format!(
+                    "PID {}, RAM: {:.0} MB, CPU: {:.1}%",
+                    p.pid, p.ram_mb, p.cpu_percent
+                ),
+                expected_impact: impact_estimate.to_string(),
+                risk_level: "none".to_string(),
+                action_type: Some("recommend_close".to_string()),
+                action_data: Some(p.name.clone()),
+            }
+        })
+        .collect()
 }
 
 pub fn optimized_jvm_flags() -> String {

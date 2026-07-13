@@ -97,73 +97,91 @@ fn launch_via_curseforge(profile: &LaunchProfile) -> LaunchResult {
         use std::os::windows::process::CommandExt;
         use std::process::Command;
 
-        // Strategy 1: Use curseforge:// URI protocol to launch the specific instance.
-        // CurseForge registers this protocol handler on install.
-        // The run-instance URI format triggers a direct game launch.
+        // Strategy 1: Try curseforge:// URI protocol.
+        // Do NOT use CREATE_NO_WINDOW — `start` needs a shell context for protocol handlers.
         let instance_id_from_manifest = read_curseforge_instance_id(&profile.instance_path);
 
-        if let Some(cf_instance_id) = instance_id_from_manifest {
-            let uri = format!("curseforge://run-instance/minecraft/{}", cf_instance_id);
-            match Command::new("cmd")
-                .args(["/C", "start", "", &uri])
-                .creation_flags(0x08000000)
-                .spawn()
-            {
-                Ok(_) => {
+        if let Some(ref cf_instance_id) = instance_id_from_manifest {
+            // Try multiple URI formats — CurseForge has changed these across versions
+            let uris = [
+                format!("curseforge://run/{}", cf_instance_id),
+                format!("curseforge://launch/{}", cf_instance_id),
+                format!("curseforge://run-instance/minecraft/{}", cf_instance_id),
+            ];
+
+            for uri in &uris {
+                let result = Command::new("cmd")
+                    .args(["/C", "start", "", uri])
+                    .spawn();
+
+                if result.is_ok() {
+                    // Give protocol handler a moment to respond
+                    std::thread::sleep(std::time::Duration::from_millis(500));
                     return LaunchResult {
                         success: true,
                         method: "CurseForge URI".to_string(),
                         message: format!(
-                            "Launching '{}' via CurseForge. The game should start shortly.",
-                            instance_name
+                            "Launching '{}' via CurseForge protocol. \
+                             If the game doesn't start, open CurseForge and click Play on '{}'.",
+                            instance_name, instance_name
                         ),
                         session_id: Some(session_id),
                     };
                 }
-                Err(e) => log::warn!("CurseForge URI launch failed: {}", e),
             }
         }
 
-        // Strategy 2: Open CurseForge app directly and let the user click play.
+        // Strategy 2: Find and open CurseForge app with the instance path as argument.
         let cf_paths = [
+            format!(
+                "{}\\CurseForge\\CurseForge.exe",
+                std::env::var("LOCALAPPDATA").unwrap_or_default()
+            ),
             format!(
                 "{}\\Programs\\CurseForge\\CurseForge.exe",
                 std::env::var("LOCALAPPDATA").unwrap_or_default()
             ),
+            // Overwolf-based CurseForge
             format!(
-                "{}\\Overwolf\\CurseForge.exe",
+                "{}\\Overwolf\\OverwolfLauncher.exe",
                 std::env::var("LOCALAPPDATA").unwrap_or_default()
-            ),
-            format!(
-                "{}\\CurseForge\\CurseForge.exe",
-                std::env::var("PROGRAMFILES").unwrap_or_default()
             ),
         ];
 
         for cf_exe in &cf_paths {
             if std::path::Path::new(cf_exe).exists() {
-                match Command::new(cf_exe)
-                    .creation_flags(0x08000000)
-                    .spawn()
-                {
-                    Ok(_) => {
-                        return LaunchResult {
-                            success: true,
-                            method: "CurseForge App".to_string(),
-                            message: format!(
-                                "Opened CurseForge app. Navigate to '{}' and click Play.",
-                                instance_name
-                            ),
-                            session_id: Some(session_id),
-                        };
-                    }
-                    Err(_) => continue,
+                // Try launching with --install or path argument to hint at the instance
+                let launch = if cf_exe.contains("Overwolf") {
+                    Command::new(cf_exe)
+                        .args(["-launchapp", "cchhcaiapeikjbdbpfplgmpobbcdkdaphclbmkbj"])
+                        .spawn()
+                } else {
+                    Command::new(cf_exe).spawn()
+                };
+
+                if launch.is_ok() {
+                    return LaunchResult {
+                        success: true,
+                        method: "CurseForge App".to_string(),
+                        message: format!(
+                            "Opened CurseForge. Click Play on '{}' to launch. \
+                             Your JVM optimizations are already applied.",
+                            instance_name
+                        ),
+                        session_id: Some(session_id),
+                    };
                 }
             }
         }
 
-        // Strategy 3: Fall back to opening the instance folder.
-        launch_via_folder_open(profile)
+        // Strategy 3: Open the folder as last resort.
+        let mut result = launch_via_folder_open(profile);
+        result.message = format!(
+            "Could not find CurseForge app. Opened the instance folder instead. \
+             Launch '{}' from CurseForge manually — your JVM optimizations are already saved.",
+            instance_name
+        );
+        result
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -3,6 +3,7 @@ import { Separator } from "@/components/ui/separator";
 
 const NAV_ITEMS = [
   { to: "/", icon: "\u25A6", label: "Dashboard" },
+  { to: "/library", icon: "\u2637", label: "Library" },
   { to: "/minecraft", icon: "\u25A3", label: "Minecraft" },
   { to: "/diagnostics", icon: "\u2699", label: "Diagnostics" },
   { to: "/recommendations", icon: "\u2691", label: "Recommendations" },

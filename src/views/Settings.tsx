@@ -1,11 +1,15 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
 import { useInvoke } from "@/hooks/useInvoke";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -23,15 +27,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { IgnoreRule } from "@/types";
+import type { IgnoreRule, OptimizationAction } from "@/types";
 
 export function Settings() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [appVersion, setAppVersion] = useState<string>("...");
+  const [exporting, setExporting] = useState(false);
   const ignoreRules = useInvoke<IgnoreRule[]>("get_ignore_rules");
+  const history = useInvoke<OptimizationAction[]>("get_optimization_history");
 
   useEffect(() => {
     ignoreRules.execute();
+    history.execute();
     initTheme();
+    getVersion().then(setAppVersion).catch(() => setAppVersion("unknown"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -64,9 +73,40 @@ export function Settings() {
   const deleteAllData = async () => {
     try {
       await invoke("delete_all_data");
+      await history.execute();
       toast.success("All data deleted");
     } catch (err) {
       toast.error(String(err));
+    }
+  };
+
+  const exportData = async () => {
+    setExporting(true);
+    try {
+      const data = await invoke<Record<string, unknown>>("export_user_data");
+      const filePath = await save({
+        defaultPath: `gamepilot-export-${new Date().toISOString().slice(0, 10)}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (filePath) {
+        await writeTextFile(filePath, JSON.stringify(data, null, 2));
+        toast.success("Data exported");
+      }
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const formatDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+    } catch {
+      return iso;
     }
   };
 
@@ -90,6 +130,64 @@ export function Settings() {
               onCheckedChange={toggleTheme}
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Optimization History */}
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            Optimization History
+            {history.data && (
+              <span className="text-muted-foreground font-normal ml-2">({history.data.length})</span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {history.data && history.data.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>File</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {history.data.map((action) => (
+                  <TableRow key={action.id}>
+                    <TableCell className="whitespace-nowrap text-xs">
+                      {formatDate(action.applied_at)}
+                    </TableCell>
+                    <TableCell className="text-xs">{action.action_type}</TableCell>
+                    <TableCell className="text-xs max-w-[300px] truncate">
+                      {action.description}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs max-w-[200px] truncate">
+                      {action.file_path
+                        ? action.file_path.split("/").pop() ?? action.file_path
+                        : "-"}
+                    </TableCell>
+                    <TableCell>
+                      {action.status === "applied" ? (
+                        <Badge variant="default" className="bg-green-600/20 text-green-400 text-xs">
+                          Applied
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs">
+                          Rolled back
+                        </Badge>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <p className="text-sm text-muted-foreground">No optimization actions recorded yet</p>
+          )}
         </CardContent>
       </Card>
 
@@ -143,6 +241,26 @@ export function Settings() {
 
       <Separator />
 
+      {/* Data Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Data Management</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Export Data</p>
+              <p className="text-xs text-muted-foreground">
+                Download all your data as a JSON file
+              </p>
+            </div>
+            <Button variant="secondary" onClick={exportData} disabled={exporting}>
+              {exporting ? "Exporting..." : "Export Data"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Danger Zone */}
       <Card className="border-destructive/30">
         <CardHeader>
@@ -190,7 +308,7 @@ export function Settings() {
             <dt className="text-muted-foreground">Application</dt>
             <dd>GamePilot</dd>
             <dt className="text-muted-foreground">Version</dt>
-            <dd>0.1.0</dd>
+            <dd>{appVersion}</dd>
             <dt className="text-muted-foreground">Runtime</dt>
             <dd>Tauri 2 + React 19</dd>
             <dt className="text-muted-foreground">Purpose</dt>

@@ -8,6 +8,7 @@ import { Dashboard } from "@/views/Dashboard";
 import { Minecraft } from "@/views/Minecraft";
 import { Diagnostics } from "@/views/Diagnostics";
 import { Recommendations } from "@/views/Recommendations";
+import { GameLibrary } from "@/views/GameLibrary";
 import { Sessions } from "@/views/Sessions";
 import { Settings } from "@/views/Settings";
 import "@/index.css";
@@ -21,6 +22,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <Routes>
           <Route element={<App />}>
             <Route index element={<Dashboard />} />
+            <Route path="library" element={<GameLibrary />} />
             <Route path="minecraft" element={<Minecraft />} />
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="recommendations" element={<Recommendations />} />

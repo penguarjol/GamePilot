@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -16,6 +16,8 @@ pub struct ModAnalysis {
     pub mods: Vec<ModInfo>,
     pub detected_performance_mods: Vec<String>,
     pub missing_performance_mods: Vec<PerformanceModRecommendation>,
+    pub conflicts: Vec<ConflictWarning>,
+    pub duplicates: Vec<DuplicateWarning>,
     pub total_size_mb: f64,
 }
 
@@ -28,6 +30,80 @@ pub struct PerformanceModRecommendation {
     pub confidence: String,
     pub url: String,
     pub loaders: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictWarning {
+    pub mod_a: String,
+    pub mod_b: String,
+    pub reason: String,
+    pub severity: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DuplicateWarning {
+    pub category: String,
+    pub installed_mods: Vec<String>,
+    pub recommendation: String,
+}
+
+// --- Metadata DB structs ---
+
+#[derive(Debug, Deserialize)]
+struct ModMetadataDb {
+    version: String,
+    mods: Vec<ModMetadata>,
+    known_conflicts: Vec<ConflictRule>,
+    duplicate_groups: Vec<DuplicateGroup>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ModMetadata {
+    pub id: String,
+    pub name: String,
+    pub loaders: Vec<String>,
+    pub side: String,
+    pub category: String,
+    pub performance_impact: Option<PerformanceImpact>,
+    pub safe_removal: Option<String>,
+    pub modrinth_slug: Option<String>,
+    pub description: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct PerformanceImpact {
+    pub memory: String,
+    pub startup: String,
+    pub runtime: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct ConflictRule {
+    mod_a: String,
+    mod_b: String,
+    reason: String,
+    severity: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DuplicateGroup {
+    category: String,
+    mods: Vec<String>,
+    recommendation: String,
+}
+
+fn load_metadata() -> ModMetadataDb {
+    let json = include_str!("../../data/mod_metadata.json");
+    serde_json::from_str(json).unwrap_or_else(|_| ModMetadataDb {
+        version: "0.0.0".to_string(),
+        mods: vec![],
+        known_conflicts: vec![],
+        duplicate_groups: vec![],
+    })
+}
+
+pub fn get_metadata_version() -> String {
+    load_metadata().version
 }
 
 const KNOWN_PERFORMANCE_MODS: &[(&str, &str)] = &[
@@ -143,12 +219,15 @@ pub fn analyze_mods(mods_path: &Path, loader: Option<&str>) -> ModAnalysis {
 
     let detected_performance_mods = detect_performance_mods(&mods);
     let missing_performance_mods = find_missing_performance_mods(&detected_performance_mods, loader);
+    let (conflicts, duplicates) = detect_conflicts_and_duplicates(&mods);
 
     ModAnalysis {
         total_mods: mods.len(),
         mods,
         detected_performance_mods,
         missing_performance_mods,
+        conflicts,
+        duplicates,
         total_size_mb: total_size as f64 / (1024.0 * 1024.0),
     }
 }
@@ -188,6 +267,88 @@ fn find_missing_performance_mods(
         .collect()
 }
 
+fn detect_conflicts_and_duplicates(mods: &[ModInfo]) -> (Vec<ConflictWarning>, Vec<DuplicateWarning>) {
+    let metadata = load_metadata();
+    let installed_ids: Vec<String> = mods
+        .iter()
+        .filter_map(|m| normalized_mod_id(m))
+        .collect();
+
+    let conflicts = detect_known_conflicts(&installed_ids, &metadata.known_conflicts);
+    let duplicates = detect_duplicate_groups(&installed_ids, &metadata.duplicate_groups, &metadata.mods);
+
+    (conflicts, duplicates)
+}
+
+fn normalized_mod_id(mod_info: &ModInfo) -> Option<String> {
+    let lower = mod_info.file_name.to_lowercase();
+    let stem = lower
+        .trim_end_matches(".jar")
+        .trim_end_matches(".zip")
+        .trim_end_matches(".disabled");
+
+    if let Some(id) = &mod_info.mod_id {
+        return Some(id.to_lowercase());
+    }
+
+    Some(stem.to_string())
+}
+
+fn detect_known_conflicts(installed_ids: &[String], rules: &[ConflictRule]) -> Vec<ConflictWarning> {
+    let mut warnings = Vec::new();
+
+    for rule in rules {
+        let has_a = installed_ids.iter().any(|id| id.contains(&rule.mod_a));
+        let has_b = installed_ids.iter().any(|id| id.contains(&rule.mod_b));
+
+        if has_a && has_b {
+            warnings.push(ConflictWarning {
+                mod_a: rule.mod_a.clone(),
+                mod_b: rule.mod_b.clone(),
+                reason: rule.reason.clone(),
+                severity: rule.severity.clone(),
+            });
+        }
+    }
+
+    warnings
+}
+
+fn detect_duplicate_groups(
+    installed_ids: &[String],
+    groups: &[DuplicateGroup],
+    known_mods: &[ModMetadata],
+) -> Vec<DuplicateWarning> {
+    let mut warnings = Vec::new();
+
+    for group in groups {
+        let installed_in_group: Vec<String> = group
+            .mods
+            .iter()
+            .filter(|mod_id| {
+                installed_ids.iter().any(|installed| installed.contains(mod_id.as_str()))
+            })
+            .map(|mod_id| {
+                known_mods
+                    .iter()
+                    .find(|m| m.id == *mod_id)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| mod_id.clone())
+            })
+            .collect();
+
+        if installed_in_group.len() > 1 {
+            warnings.push(DuplicateWarning {
+                category: group.category.clone(),
+                installed_mods: installed_in_group,
+                recommendation: group.recommendation.clone(),
+            });
+        }
+    }
+
+    warnings
+}
+
 fn extract_mod_id(filename: &str) -> Option<String> {
     let name = filename
         .trim_end_matches(".jar")
@@ -209,5 +370,64 @@ fn extract_version(filename: &str) -> Option<String> {
         Some(parts[0].to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_loads_successfully() {
+        let db = load_metadata();
+        assert_eq!(db.version, "1.0.0");
+        assert!(db.mods.len() >= 30);
+        assert!(!db.known_conflicts.is_empty());
+        assert!(!db.duplicate_groups.is_empty());
+    }
+
+    #[test]
+    fn get_metadata_version_returns_version() {
+        let version = get_metadata_version();
+        assert_eq!(version, "1.0.0");
+    }
+
+    #[test]
+    fn detects_sodium_optifine_conflict() {
+        let mods = vec![
+            ModInfo { file_name: "sodium-0.5.8.jar".into(), mod_id: Some("sodium".into()), display_name: None, version: Some("0.5.8".into()), size_bytes: 1000 },
+            ModInfo { file_name: "OptiFine_1.20.1_HD.jar".into(), mod_id: Some("optifine".into()), display_name: None, version: None, size_bytes: 2000 },
+        ];
+        let (conflicts, _) = detect_conflicts_and_duplicates(&mods);
+        assert!(conflicts.iter().any(|c| c.mod_a == "sodium" && c.mod_b == "optifine"));
+    }
+
+    #[test]
+    fn detects_duplicate_rendering_group() {
+        let mods = vec![
+            ModInfo { file_name: "sodium-0.5.8.jar".into(), mod_id: Some("sodium".into()), display_name: None, version: Some("0.5.8".into()), size_bytes: 1000 },
+            ModInfo { file_name: "embeddium-1.0.jar".into(), mod_id: Some("embeddium".into()), display_name: None, version: Some("1.0".into()), size_bytes: 2000 },
+        ];
+        let (_, duplicates) = detect_conflicts_and_duplicates(&mods);
+        assert!(duplicates.iter().any(|d| d.category == "rendering_optimizer"));
+    }
+
+    #[test]
+    fn no_conflicts_for_compatible_mods() {
+        let mods = vec![
+            ModInfo { file_name: "modernfix-5.0.jar".into(), mod_id: Some("modernfix".into()), display_name: None, version: Some("5.0".into()), size_bytes: 1000 },
+            ModInfo { file_name: "ferritecore-6.0.jar".into(), mod_id: Some("ferritecore".into()), display_name: None, version: Some("6.0".into()), size_bytes: 1000 },
+        ];
+        let (conflicts, duplicates) = detect_conflicts_and_duplicates(&mods);
+        assert!(conflicts.is_empty());
+        assert!(duplicates.is_empty());
+    }
+
+    #[test]
+    fn analyze_mods_returns_empty_for_nonexistent_path() {
+        let analysis = analyze_mods(Path::new("/nonexistent/path"), None);
+        assert_eq!(analysis.total_mods, 0);
+        assert!(analysis.conflicts.is_empty());
+        assert!(analysis.duplicates.is_empty());
     }
 }

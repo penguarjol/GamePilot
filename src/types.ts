@@ -229,6 +229,20 @@ export interface SavedInstance {
   last_played_at: string | null;
 }
 
+export interface OptimizationAction {
+  id: string;
+  recommendation_id: string | null;
+  instance_id: string | null;
+  action_type: string;
+  description: string;
+  file_path: string | null;
+  old_value: string | null;
+  new_value: string | null;
+  status: string;
+  applied_at: string;
+  rolled_back_at: string | null;
+}
+
 export interface IgnoreRule {
   id: string;
   rule_type: string;
@@ -302,4 +316,21 @@ export interface TelemetrySummary {
   ram_avg_mb: number | null;
   ram_peak_mb: number | null;
   hog_count: number | null;
+}
+
+export interface GameInfo {
+  id: string;
+  name: string;
+  icon: string;
+  installed: boolean;
+  install_path: string | null;
+}
+
+export interface SteamGameInstance {
+  id: string;
+  game_id: string;
+  name: string;
+  path: string;
+  version: string | null;
+  last_played: string | null;
 }

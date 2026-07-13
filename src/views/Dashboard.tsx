@@ -12,6 +12,7 @@ import type {
   Recommendation,
   Session,
   SavedInstance,
+  GameInfo,
   SelfMetrics,
   GovernorStatus,
 } from "@/types";
@@ -27,6 +28,7 @@ export function Dashboard() {
   const launchers = useInvoke<DiscoveredLauncher[]>("discover_launchers");
   const sessions = useInvoke<Session[]>("get_sessions");
   const saved = useInvoke<SavedInstance[]>("get_saved_instances");
+  const discoveredGames = useInvoke<GameInfo[]>("discover_all_games");
   const recs = useInvoke<Recommendation[]>("get_recommendations_for_path");
   const selfMetrics = useInvoke<SelfMetrics>("get_self_metrics");
   const governor = useInvoke<GovernorStatus>("get_governor_status");
@@ -35,6 +37,7 @@ export function Dashboard() {
     launchers.execute();
     sessions.execute();
     saved.execute();
+    discoveredGames.execute();
     selfMetrics.execute();
     governor.execute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -251,26 +254,45 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Saved Instances */}
+        {/* Discovered Games */}
         <Card>
-          <CardHeader>
-            <CardTitle>Saved Instances</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle>Games</CardTitle>
+            {discoveredGames.data && (
+              <Badge variant="secondary">
+                {discoveredGames.data.length} detected
+              </Badge>
+            )}
           </CardHeader>
           <CardContent>
-            {saved.data && saved.data.length > 0 ? (
-              <ul className="space-y-2">
-                {saved.data.slice(0, 4).map((inst) => (
-                  <li key={inst.id} className="text-sm">
-                    <span className="font-medium">{inst.name}</span>
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      {inst.minecraft_version ?? "Unknown"}
-                      {inst.loader_type ? ` / ${inst.loader_type}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            {discoveredGames.loading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            ) : discoveredGames.data && discoveredGames.data.length > 0 ? (
+              <div className="space-y-3">
+                <ul className="space-y-2">
+                  {discoveredGames.data.slice(0, 4).map((g) => (
+                    <li key={g.id} className="flex items-center justify-between text-sm">
+                      <span className="font-medium">{g.name}</span>
+                      <Badge variant={g.installed ? "default" : "outline"}>
+                        {g.installed ? "Installed" : "Not Found"}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => navigate("/library")}
+                >
+                  View Library
+                </Button>
+              </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No instances saved</p>
+              <p className="text-sm text-muted-foreground">No games detected</p>
             )}
           </CardContent>
         </Card>

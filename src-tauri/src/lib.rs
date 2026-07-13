@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub mod db;
+pub mod events;
+pub mod gamemodule;
+pub mod games;
 pub mod governor;
 pub mod hardware;
 pub mod launch;
@@ -17,6 +20,7 @@ use tauri::Manager;
 
 struct AppState {
     db: Database,
+    app_handle: tauri::AppHandle,
 }
 
 // --- Hardware & Process ---
@@ -166,6 +170,41 @@ async fn get_modpack_health(
     .map_err(|e| e.to_string())
 }
 
+// --- Game Library ---
+
+#[tauri::command]
+async fn discover_all_games() -> Result<Vec<gamemodule::GameInfo>, String> {
+    tokio::task::spawn_blocking(|| {
+        use gamemodule::GameModule;
+        let steam = games::steam::SteamModule;
+        let mut infos = vec![steam.game_info()];
+        infos.insert(
+            0,
+            gamemodule::GameInfo {
+                id: "minecraft".to_string(),
+                name: "Minecraft".to_string(),
+                icon: "\u{25A3}".to_string(),
+                installed: true,
+                install_path: None,
+            },
+        );
+        infos
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn discover_steam_games() -> Result<Vec<gamemodule::GameInstance>, String> {
+    tokio::task::spawn_blocking(|| {
+        use gamemodule::GameModule;
+        let steam = games::steam::SteamModule;
+        steam.discover_instances()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 // --- Recommendations ---
 
 #[tauri::command]
@@ -203,6 +242,15 @@ fn update_recommendation_status(
     }
     let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
     let conn = app.db.conn();
+
+    let old_status: String = conn
+        .query_row(
+            "SELECT status FROM recommendations WHERE id = ?1",
+            rusqlite::params![recommendation_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Recommendation not found".to_string())?;
+
     let rows = conn.execute(
         "UPDATE recommendations SET status = ?1, updated_at = datetime('now') WHERE id = ?2",
         rusqlite::params![status, recommendation_id],
@@ -211,6 +259,13 @@ fn update_recommendation_status(
     if rows == 0 {
         return Err("Recommendation not found".to_string());
     }
+
+    events::emit(&app.app_handle, &events::GamePilotEvent::RecommendationStatusChanged {
+        recommendation_id,
+        old_status,
+        new_status: status,
+    });
+
     Ok(())
 }
 
@@ -270,11 +325,16 @@ fn launch_instance(
     if result.success {
         if let Ok(app) = state.lock() {
             match sessions::create_session(&app.db, &instance_id, &result.method) {
-            Ok(session) => {
-                result.session_id = Some(session.id.clone());
-                log::info!("Session created: {}", session.id);
-            }
-            Err(e) => log::error!("Failed to create session: {}", e),
+                Ok(session) => {
+                    result.session_id = Some(session.id.clone());
+                    log::info!("Session created: {}", session.id);
+                    events::emit(&app.app_handle, &events::GamePilotEvent::GameLaunched {
+                        instance_id,
+                        session_id: session.id,
+                        method: result.method.clone(),
+                    });
+                }
+                Err(e) => log::error!("Failed to create session: {}", e),
             }
         } else {
             log::error!("Failed to acquire state lock for session creation");
@@ -318,13 +378,7 @@ async fn get_recommendations_for_path(
     .await
     .map_err(|e| e.to_string())?;
 
-    let instance_id = {
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(instance_path.as_bytes());
-        let hash = hasher.finalize();
-        format!("inst-{}", hex::encode(&hash[..12]))
-    };
+    let instance_id = compute_instance_id(&instance_path);
 
     if let Ok(app) = state.lock() {
         let conn = app.db.conn();
@@ -373,6 +427,13 @@ fn get_session_report(
     sessions::generate_report(&app.db, &session_id)
 }
 
+// --- Mod Metadata ---
+
+#[tauri::command]
+fn get_mod_metadata_version() -> String {
+    minecraft::mods::get_metadata_version()
+}
+
 // --- Mod Store (Modrinth) ---
 
 #[tauri::command]
@@ -410,13 +471,40 @@ async fn install_modrinth_mod(
     download_url: String,
     filename: String,
     mods_dir: String,
+    state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<minecraft::modstore::InstallResult, String> {
-    minecraft::modstore::install_mod(
+    let app_handle = {
+        let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+        app.app_handle.clone()
+    };
+
+    let result = minecraft::modstore::install_mod(
         &download_url,
         &filename,
         std::path::Path::new(&mods_dir),
     )
-    .await
+    .await?;
+
+    if result.success {
+        let instance_path = std::path::Path::new(&mods_dir)
+            .parent()
+            .unwrap_or(std::path::Path::new(""))
+            .to_string_lossy();
+        let instance_id = compute_instance_id(&instance_path);
+        let mod_name = std::path::Path::new(&filename)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        events::emit(&app_handle, &events::GamePilotEvent::ModInstalled {
+            instance_id,
+            mod_name,
+            filename: filename.clone(),
+        });
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -463,24 +551,68 @@ fn apply_jvm_settings(
         .map_err(|e| format!("Failed to read config: {}", e))?;
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
+    let read_cfg_value = |lines: &[String], key: &str| -> Option<String> {
+        let prefix = format!("{}=", key);
+        lines.iter().find_map(|l| {
+            if l.starts_with(&prefix) { Some(l[prefix.len()..].to_string()) } else { None }
+        })
+    };
+
+    let mut changes: Vec<(String, Option<String>, String)> = Vec::new();
+
     if let Some(xmx) = xmx_mb {
+        let old = read_cfg_value(&lines, "MaxMemAlloc");
         upsert_cfg_value(&mut lines, "MaxMemAlloc", &xmx.to_string());
+        changes.push(("MaxMemAlloc".to_string(), old, xmx.to_string()));
     }
     if let Some(xms) = xms_mb {
+        let old = read_cfg_value(&lines, "MinMemAlloc");
         upsert_cfg_value(&mut lines, "MinMemAlloc", &xms.to_string());
+        changes.push(("MinMemAlloc".to_string(), old, xms.to_string()));
     }
     if let Some(ref args) = jvm_args {
+        let old = read_cfg_value(&lines, "JvmArgs");
         upsert_cfg_value(&mut lines, "JvmArgs", args);
+        changes.push(("JvmArgs".to_string(), old, args.clone()));
     }
     if let Some(ref java) = java_path {
+        let old = read_cfg_value(&lines, "JavaPath");
         upsert_cfg_value(&mut lines, "JavaPath", java);
+        changes.push(("JavaPath".to_string(), old, java.clone()));
     }
 
     let new_content = lines.join("\n") + "\n";
     std::fs::write(&cfg_path, &new_content)
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
+    let instance_id = compute_instance_id(&instance_path);
+    let conn = app.db.conn();
+    for (key, old, new_val) in &changes {
+        conn.execute(
+            "INSERT INTO optimization_actions (id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                uuid::Uuid::new_v4().to_string(),
+                recommendation_id,
+                instance_id,
+                "jvm_settings",
+                format!("Set {} to {}", key, new_val),
+                cfg_path.to_string_lossy().to_string(),
+                old.as_deref(),
+                new_val,
+            ],
+        ).ok();
+    }
+
     Ok(rp)
+}
+
+fn compute_instance_id(instance_path: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(instance_path.as_bytes());
+    let hash = hasher.finalize();
+    format!("inst-{}", hex::encode(&hash[..12]))
 }
 
 fn upsert_cfg_value(lines: &mut Vec<String>, key: &str, value: &str) {
@@ -512,10 +644,26 @@ fn backup_file(
 #[tauri::command]
 fn rollback_file(
     rollback_point_json: String,
+    state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let rp: recommendations::RollbackPoint =
         serde_json::from_str(&rollback_point_json).map_err(|e| e.to_string())?;
-    recommendations::rollback_file(&rp)
+    recommendations::rollback_file(&rp)?;
+
+    if let Ok(app) = state.lock() {
+        let conn = app.db.conn();
+        conn.execute(
+            "UPDATE optimization_actions SET status = 'rolled_back', rolled_back_at = datetime('now') \
+             WHERE file_path = ?1 AND status = 'applied'",
+            rusqlite::params![rp.file_path],
+        ).ok();
+
+        events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationRolledBack {
+            recommendation_id: rp.recommendation_id.clone(),
+            file_path: rp.file_path.clone(),
+        });
+    }
+    Ok(())
 }
 
 // --- Instance Persistence ---
@@ -532,6 +680,11 @@ fn delete_instance(
         rusqlite::params![instance_id],
     )
     .map_err(|e| format!("Failed to delete instance: {}", e))?;
+
+    events::emit(&app.app_handle, &events::GamePilotEvent::InstanceRemoved {
+        instance_id,
+    });
+
     Ok(())
 }
 
@@ -566,6 +719,11 @@ fn save_instance(
         ],
     )
     .map_err(|e| format!("Failed to save instance: {}", e))?;
+
+    events::emit(&app.app_handle, &events::GamePilotEvent::InstanceAdded {
+        instance_id: instance.id,
+        name: instance.name,
+    });
 
     Ok(())
 }
@@ -700,6 +858,100 @@ fn get_telemetry_summaries(
     telemetry::get_summaries(&app.db, &session_id)
 }
 
+// --- Optimization History ---
+
+#[tauri::command]
+fn get_optimization_history(
+    instance_id: Option<String>,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+    let (query, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match &instance_id {
+        Some(id) => (
+            "SELECT id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value, status, applied_at, rolled_back_at \
+             FROM optimization_actions WHERE instance_id = ?1 ORDER BY applied_at DESC LIMIT 100",
+            vec![Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>],
+        ),
+        None => (
+            "SELECT id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value, status, applied_at, rolled_back_at \
+             FROM optimization_actions ORDER BY applied_at DESC LIMIT 100",
+            vec![],
+        ),
+    };
+
+    let mut stmt = conn.prepare(query).map_err(|e| format!("DB error: {}", e))?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "recommendation_id": row.get::<_, Option<String>>(1)?,
+            "instance_id": row.get::<_, Option<String>>(2)?,
+            "action_type": row.get::<_, String>(3)?,
+            "description": row.get::<_, String>(4)?,
+            "file_path": row.get::<_, Option<String>>(5)?,
+            "old_value": row.get::<_, Option<String>>(6)?,
+            "new_value": row.get::<_, Option<String>>(7)?,
+            "status": row.get::<_, String>(8)?,
+            "applied_at": row.get::<_, String>(9)?,
+            "rolled_back_at": row.get::<_, Option<String>>(10)?,
+        }))
+    })
+    .map_err(|e| format!("Query error: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(rows)
+}
+
+// --- Data Export ---
+
+#[tauri::command]
+fn export_user_data(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<serde_json::Value, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let query_json_array = |sql: &str| -> Vec<serde_json::Value> {
+        let mut stmt = match conn.prepare(sql) {
+            Ok(s) => s,
+            Err(_) => return vec![],
+        };
+        let col_count = stmt.column_count();
+        let col_names: Vec<String> = (0..col_count)
+            .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+            .collect();
+        let result = stmt.query_map([], |row| {
+            let mut map = serde_json::Map::new();
+            for (i, name) in col_names.iter().enumerate() {
+                let val: rusqlite::Result<Option<String>> = row.get(i);
+                map.insert(
+                    name.clone(),
+                    match val {
+                        Ok(Some(s)) => serde_json::Value::String(s),
+                        _ => serde_json::Value::Null,
+                    },
+                );
+            }
+            Ok(serde_json::Value::Object(map))
+        });
+        match result {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => vec![],
+        }
+    };
+
+    Ok(serde_json::json!({
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "version": "0.5.0",
+        "instances": query_json_array("SELECT * FROM game_instances"),
+        "sessions": query_json_array("SELECT * FROM sessions"),
+        "recommendations": query_json_array("SELECT * FROM recommendations"),
+        "optimization_actions": query_json_array("SELECT * FROM optimization_actions"),
+        "preferences": query_json_array("SELECT * FROM user_preferences"),
+    }))
+}
+
 // --- Data Management ---
 
 #[tauri::command]
@@ -709,7 +961,8 @@ fn delete_all_data(
     let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
     let conn = app.db.conn();
     conn.execute_batch(
-        "DELETE FROM telemetry_summaries; \
+        "DELETE FROM optimization_actions; \
+         DELETE FROM telemetry_summaries; \
          DELETE FROM process_observations; \
          DELETE FROM rollback_points; \
          DELETE FROM recommendations; \
@@ -765,13 +1018,20 @@ fn apply_config_change(
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<recommendations::RollbackPoint, String> {
     let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    recommendations::apply_config_change(
+    let rp = recommendations::apply_config_change(
         std::path::Path::new(&file_path),
         &key,
         &new_value,
         &recommendation_id,
         &app.db,
-    )
+    )?;
+
+    events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationApplied {
+        recommendation_id,
+        file_path,
+    });
+
+    Ok(rp)
 }
 
 #[tauri::command]
@@ -787,8 +1047,47 @@ fn apply_config_change_auto(
         std::path::Path::new(&instance_path),
         &filename,
     );
+
+    let old_value = std::fs::read_to_string(&resolved)
+        .ok()
+        .and_then(|content| {
+            content.lines().find_map(|line| {
+                let trimmed = line.trim();
+                if let Some((k, v)) = trimmed.split_once('=').or_else(|| trimmed.split_once(':')) {
+                    if k.trim() == key { Some(v.trim().to_string()) } else { None }
+                } else {
+                    None
+                }
+            })
+        });
+
     let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    recommendations::apply_config_change(&resolved, &key, &new_value, &recommendation_id, &app.db)
+    let rp = recommendations::apply_config_change(&resolved, &key, &new_value, &recommendation_id, &app.db)?;
+
+    let instance_id = compute_instance_id(&instance_path);
+    let conn = app.db.conn();
+    conn.execute(
+        "INSERT INTO optimization_actions (id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            recommendation_id,
+            instance_id,
+            "config_change",
+            format!("Changed {} from {} to {}", key, old_value.as_deref().unwrap_or("(unset)"), new_value),
+            resolved.to_string_lossy().to_string(),
+            old_value,
+            new_value,
+        ],
+    ).ok();
+
+    let file_path_str = resolved.to_string_lossy().to_string();
+    events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationApplied {
+        recommendation_id,
+        file_path: file_path_str,
+    });
+
+    Ok(rp)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -810,8 +1109,9 @@ pub fn run() {
             let db_path = app_data_dir.join("gamepilot.db");
 
             let db = Database::open(&db_path).expect("Failed to open database");
+            let handle = app.handle().clone();
 
-            app.manage(Mutex::new(AppState { db }));
+            app.manage(Mutex::new(AppState { db, app_handle: handle }));
 
             Ok(())
         })
@@ -822,10 +1122,13 @@ pub fn run() {
             get_self_metrics,
             is_game_running,
             get_governor_status,
+            discover_all_games,
+            discover_steam_games,
             discover_launchers,
             discover_all_instances,
             scan_instance,
             analyze_mods,
+            get_mod_metadata_version,
             analyze_configs,
             get_modpack_health,
             get_recommendations,
@@ -852,6 +1155,8 @@ pub fn run() {
             set_preference,
             apply_config_change,
             apply_config_change_auto,
+            get_optimization_history,
+            export_user_data,
             tail_game_log,
             store_telemetry_summary,
             get_telemetry_summaries,

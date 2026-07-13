@@ -120,4 +120,20 @@ CREATE TABLE IF NOT EXISTS telemetry_summaries (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
+
+CREATE TABLE IF NOT EXISTS optimization_actions (
+    id TEXT PRIMARY KEY,
+    recommendation_id TEXT,
+    instance_id TEXT,
+    action_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    file_path TEXT,
+    old_value TEXT,
+    new_value TEXT,
+    status TEXT NOT NULL DEFAULT 'applied',
+    applied_at TEXT NOT NULL DEFAULT (datetime('now')),
+    rolled_back_at TEXT,
+    FOREIGN KEY (recommendation_id) REFERENCES recommendations(id),
+    FOREIGN KEY (instance_id) REFERENCES game_instances(id)
+);
 "#;

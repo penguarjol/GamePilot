@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub mod db;
+pub mod governor;
 pub mod hardware;
 pub mod launch;
 pub mod minecraft;
 pub mod platform;
 pub mod recommendations;
 pub mod sessions;
+pub mod telemetry;
 
 use db::Database;
 use std::path::PathBuf;
@@ -50,6 +52,9 @@ async fn get_process_info(
 
 #[tauri::command]
 async fn get_telemetry_sample() -> Result<hardware::TelemetrySample, String> {
+    if governor::current_mode() == governor::GovernorMode::Paused {
+        return Err("Telemetry paused by performance governor".to_string());
+    }
     tokio::task::spawn_blocking(hardware::collect_telemetry_sample)
         .await
         .map_err(|e| e.to_string())
@@ -67,6 +72,26 @@ async fn is_game_running(process_name: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || hardware::is_process_running(&process_name))
         .await
         .map_err(|e| e.to_string())
+}
+
+// --- Governor ---
+
+#[tauri::command]
+async fn get_governor_status() -> Result<governor::GovernorStatus, String> {
+    tokio::task::spawn_blocking(|| {
+        let metrics = hardware::collect_self_metrics();
+        let game_running = hardware::is_process_running("java");
+        let mode = governor::evaluate(metrics.cpu_percent, metrics.ram_mb, game_running);
+        governor::GovernorStatus {
+            mode: format!("{:?}", mode),
+            self_cpu: metrics.cpu_percent,
+            self_ram_mb: metrics.ram_mb,
+            telemetry_interval_ms: governor::telemetry_interval_ms(),
+            game_running,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 // --- Minecraft Discovery ---
@@ -516,6 +541,46 @@ fn remove_ignore_rule(
     Ok(())
 }
 
+// --- Telemetry ---
+
+#[tauri::command]
+async fn tail_game_log(
+    instance_path: String,
+    from_pos: u64,
+) -> Result<(Vec<telemetry::LogEvent>, u64), String> {
+    tokio::task::spawn_blocking(move || {
+        let log_path = telemetry::find_log_path(std::path::Path::new(&instance_path));
+        match log_path {
+            Some(p) => Ok(telemetry::tail_minecraft_log(&p, from_pos)),
+            None => Ok((Vec::new(), 0)),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn store_telemetry_summary(
+    session_id: String,
+    cpu_avg: f64,
+    ram_avg: f64,
+    ram_peak: f64,
+    hog_count: i32,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    telemetry::store_summary(&app.db, &session_id, cpu_avg, ram_avg, ram_peak, hog_count)
+}
+
+#[tauri::command]
+fn get_telemetry_summaries(
+    session_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<telemetry::TelemetrySummary>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    telemetry::get_summaries(&app.db, &session_id)
+}
+
 // --- Data Management ---
 
 #[tauri::command]
@@ -525,7 +590,8 @@ fn delete_all_data(
     let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
     let conn = app.db.conn();
     conn.execute_batch(
-        "DELETE FROM process_observations; \
+        "DELETE FROM telemetry_summaries; \
+         DELETE FROM process_observations; \
          DELETE FROM rollback_points; \
          DELETE FROM recommendations; \
          DELETE FROM sessions; \
@@ -636,6 +702,7 @@ pub fn run() {
             get_telemetry_sample,
             get_self_metrics,
             is_game_running,
+            get_governor_status,
             discover_launchers,
             discover_all_instances,
             scan_instance,
@@ -665,6 +732,9 @@ pub fn run() {
             set_preference,
             apply_config_change,
             apply_config_change_auto,
+            tail_game_log,
+            store_telemetry_summary,
+            get_telemetry_summaries,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

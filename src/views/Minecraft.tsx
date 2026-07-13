@@ -37,6 +37,10 @@ import type {
   ModpackHealth,
   RollbackPoint,
   ProcessInfo,
+  ModSearchResult,
+  ModVersion,
+  ModFile,
+  InstallResult,
 } from "@/types";
 
 export function Minecraft() {
@@ -55,6 +59,14 @@ export function Minecraft() {
   const [appliedChanges, setAppliedChanges] = useState<RollbackPoint[]>([]);
   const [preLaunchOpen, setPreLaunchOpen] = useState(false);
   const [resourceHogs, setResourceHogs] = useState<ProcessInfo[]>([]);
+
+  const [modSearchQuery, setModSearchQuery] = useState("");
+  const [modSearchResults, setModSearchResults] = useState<ModSearchResult[]>([]);
+  const [modSearching, setModSearching] = useState(false);
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
+  const [pendingInstall, setPendingInstall] = useState<{ mod: ModSearchResult; file: ModFile } | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [quickInstalling, setQuickInstalling] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     saved.execute();
@@ -279,6 +291,142 @@ export function Minecraft() {
     }
   };
 
+  const formatDownloads = (n: number): string => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return String(n);
+  };
+
+  const searchMods = async () => {
+    if (!modSearchQuery.trim() || !selectedInstance) return;
+    setModSearching(true);
+    try {
+      const results = await invoke<ModSearchResult[]>("search_modrinth_mods", {
+        query: modSearchQuery.trim(),
+        mcVersion: selectedInstance.minecraft_version ?? undefined,
+        loader: selectedInstance.loader_type ?? undefined,
+        limit: 20,
+      });
+      setModSearchResults(results);
+    } catch (err) {
+      toast.error(`Search failed: ${err}`);
+    } finally {
+      setModSearching(false);
+    }
+  };
+
+  const prepareInstall = async (mod: ModSearchResult) => {
+    if (!selectedInstance) return;
+    try {
+      const versions = await invoke<ModVersion[]>("get_modrinth_mod_versions", {
+        projectId: mod.project_id,
+        mcVersion: selectedInstance.minecraft_version ?? undefined,
+        loader: selectedInstance.loader_type ?? undefined,
+      });
+      if (versions.length === 0) {
+        toast.error("No compatible versions found");
+        return;
+      }
+      const latest = versions[0];
+      const primary = latest.files.find((f) => f.primary) ?? latest.files[0];
+      if (!primary) {
+        toast.error("No downloadable file found");
+        return;
+      }
+      setPendingInstall({ mod, file: primary });
+      setInstallDialogOpen(true);
+    } catch (err) {
+      toast.error(`Failed to fetch versions: ${err}`);
+    }
+  };
+
+  const confirmInstall = async () => {
+    if (!pendingInstall || !selectedInstance?.mods_path) return;
+    setInstalling(true);
+    try {
+      const result = await invoke<InstallResult>("install_modrinth_mod", {
+        downloadUrl: pendingInstall.file.url,
+        filename: pendingInstall.file.filename,
+        modsDir: selectedInstance.mods_path,
+      });
+      if (result.success) {
+        toast.success(`Installed ${result.filename}`);
+        setInstallDialogOpen(false);
+        setPendingInstall(null);
+        await runAnalysis(selectedInstance);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (err) {
+      toast.error(`Install failed: ${err}`);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const toggleMod = async (filename: string, disabled: boolean) => {
+    if (!selectedInstance?.mods_path) return;
+    try {
+      if (disabled) {
+        await invoke<string>("enable_mod", { modsDir: selectedInstance.mods_path, filename });
+        toast.success(`Enabled ${filename.replace(".disabled", "")}`);
+      } else {
+        await invoke<string>("remove_mod", { modsDir: selectedInstance.mods_path, filename });
+        toast.success(`Disabled ${filename}`);
+      }
+      await runAnalysis(selectedInstance);
+    } catch (err) {
+      toast.error(`Failed: ${err}`);
+    }
+  };
+
+  const quickInstallMod = async (modName: string) => {
+    if (!selectedInstance?.mods_path) return;
+    setQuickInstalling((prev) => ({ ...prev, [modName]: true }));
+    try {
+      const results = await invoke<ModSearchResult[]>("search_modrinth_mods", {
+        query: modName,
+        mcVersion: selectedInstance.minecraft_version ?? undefined,
+        loader: selectedInstance.loader_type ?? undefined,
+        limit: 5,
+      });
+      if (results.length === 0) {
+        toast.error(`"${modName}" not found on Modrinth`);
+        return;
+      }
+      const match = results[0];
+      const versions = await invoke<ModVersion[]>("get_modrinth_mod_versions", {
+        projectId: match.project_id,
+        mcVersion: selectedInstance.minecraft_version ?? undefined,
+        loader: selectedInstance.loader_type ?? undefined,
+      });
+      if (versions.length === 0) {
+        toast.error(`No compatible version of "${modName}" found`);
+        return;
+      }
+      const primary = versions[0].files.find((f) => f.primary) ?? versions[0].files[0];
+      if (!primary) {
+        toast.error("No downloadable file");
+        return;
+      }
+      const result = await invoke<InstallResult>("install_modrinth_mod", {
+        downloadUrl: primary.url,
+        filename: primary.filename,
+        modsDir: selectedInstance.mods_path,
+      });
+      if (result.success) {
+        toast.success(`Installed ${result.filename}`);
+        await runAnalysis(selectedInstance);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (err) {
+      toast.error(`Quick install failed: ${err}`);
+    } finally {
+      setQuickInstalling((prev) => ({ ...prev, [modName]: false }));
+    }
+  };
+
   const riskColor = (score: number) =>
     score >= 70 ? "text-success" : score >= 40 ? "text-warning" : "text-destructive";
 
@@ -499,23 +647,67 @@ export function Minecraft() {
                         ))}
                       </div>
                     )}
+                    {modAnalysis.missing_performance_mods.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs text-muted-foreground">Recommended performance mods:</span>
+                        {modAnalysis.missing_performance_mods.map((rec) => (
+                          <div key={rec.mod_id} className="flex items-center justify-between rounded-lg border border-border p-2">
+                            <div className="min-w-0 flex-1">
+                              <span className="text-sm font-medium">{rec.mod_name}</span>
+                              <p className="text-xs text-muted-foreground truncate">{rec.reason}</p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={quickInstalling[rec.mod_name]}
+                              onClick={() => quickInstallMod(rec.mod_name)}
+                            >
+                              {quickInstalling[rec.mod_name] ? "Installing..." : "Install from Modrinth"}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {modAnalysis.mods.length > 0 && (
                       <Table>
                         <TableHeader>
                           <TableRow>
                             <TableHead>File</TableHead>
                             <TableHead>Version</TableHead>
+                            <TableHead>Status</TableHead>
                             <TableHead className="text-right">Size</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {modAnalysis.mods.slice(0, 50).map((mod, i) => (
-                            <TableRow key={i}>
-                              <TableCell className="font-medium">{mod.display_name ?? mod.file_name}</TableCell>
-                              <TableCell className="text-muted-foreground">{mod.version ?? "-"}</TableCell>
-                              <TableCell className="text-right">{(mod.size_bytes / 1024 / 1024).toFixed(1)} MB</TableCell>
-                            </TableRow>
-                          ))}
+                          {modAnalysis.mods.slice(0, 50).map((mod, i) => {
+                            const isDisabled = mod.file_name.endsWith(".disabled");
+                            return (
+                              <TableRow key={i}>
+                                <TableCell className="font-medium">{mod.display_name ?? mod.file_name}</TableCell>
+                                <TableCell className="text-muted-foreground">{mod.version ?? "-"}</TableCell>
+                                <TableCell>
+                                  {isDisabled ? (
+                                    <Badge variant="outline">disabled</Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600">active</Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right">{(mod.size_bytes / 1024 / 1024).toFixed(1)} MB</TableCell>
+                                <TableCell className="text-right">
+                                  {isDisabled ? (
+                                    <Button size="xs" variant="secondary" onClick={() => toggleMod(mod.file_name, true)}>
+                                      Enable
+                                    </Button>
+                                  ) : (
+                                    <Button size="xs" variant="destructive" onClick={() => toggleMod(mod.file_name, false)}>
+                                      Disable
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     )}
@@ -527,6 +719,104 @@ export function Minecraft() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* Mod Store */}
+              {selectedInstance?.mods_path && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Mod Store</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={modSearchQuery}
+                        onChange={(e) => setModSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && searchMods()}
+                        placeholder="Search Modrinth..."
+                        className="flex-1 h-8 rounded-lg border border-border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <Button onClick={searchMods} disabled={modSearching || !modSearchQuery.trim()}>
+                        {modSearching ? "Searching..." : "Search"}
+                      </Button>
+                    </div>
+
+                    {modSearchResults.length > 0 && (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {modSearchResults.map((mod) => (
+                          <Card key={mod.project_id} size="sm">
+                            <CardContent className="flex gap-3 pt-3">
+                              {mod.icon_url ? (
+                                <img
+                                  src={mod.icon_url}
+                                  alt=""
+                                  className="h-10 w-10 rounded-md object-cover shrink-0"
+                                />
+                              ) : (
+                                <div className="h-10 w-10 rounded-md bg-muted shrink-0" />
+                              )}
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-sm font-medium truncate">{mod.title}</span>
+                                  <span className="text-xs text-muted-foreground shrink-0">
+                                    {formatDownloads(mod.downloads)} downloads
+                                  </span>
+                                </div>
+                                <p className="text-xs text-muted-foreground">by {mod.author}</p>
+                                <p className="text-xs text-muted-foreground line-clamp-2">{mod.description}</p>
+                                <div className="flex items-center justify-between pt-1">
+                                  <div className="flex flex-wrap gap-1">
+                                    {mod.categories.slice(0, 3).map((cat) => (
+                                      <Badge key={cat} variant="outline" className="text-[10px]">{cat}</Badge>
+                                    ))}
+                                  </div>
+                                  <Button size="xs" onClick={() => prepareInstall(mod)}>
+                                    Install
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Install Confirmation Dialog */}
+              <Dialog open={installDialogOpen} onOpenChange={setInstallDialogOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Confirm Install</DialogTitle>
+                    <DialogDescription>
+                      Review the file before installing.
+                    </DialogDescription>
+                  </DialogHeader>
+                  {pendingInstall && (
+                    <div className="space-y-3">
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+                        <dt className="text-muted-foreground">Mod</dt>
+                        <dd className="font-medium">{pendingInstall.mod.title}</dd>
+                        <dt className="text-muted-foreground">File</dt>
+                        <dd className="font-mono text-xs truncate">{pendingInstall.file.filename}</dd>
+                        <dt className="text-muted-foreground">Size</dt>
+                        <dd>{(pendingInstall.file.size / 1024 / 1024).toFixed(2)} MB</dd>
+                        <dt className="text-muted-foreground">Source</dt>
+                        <dd className="text-xs truncate">Modrinth</dd>
+                      </dl>
+                    </div>
+                  )}
+                  <DialogFooter>
+                    <Button variant="secondary" onClick={() => setInstallDialogOpen(false)} disabled={installing}>
+                      Cancel
+                    </Button>
+                    <Button onClick={confirmInstall} disabled={installing}>
+                      {installing ? "Installing..." : "Install"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               {/* Config Recommendations */}
               {configAnalysis && configAnalysis.recommendations.length > 0 && (

@@ -1,6 +1,6 @@
 [package]
 name = "gamepilot-app"
-version = "0.3.0"
+version = "0.4.0"
 description = "GamePilot — Universal Gaming Intelligence Platform"
 authors = ["GamePilot"]
 edition = "2021"
@@ -34,6 +34,7 @@ thiserror = "2"
 glob = "0.3"
 tokio = { version = "1", features = ["full"] }
 walkdir = "2"
+reqwest = { version = "0.13.4", features = ["json", "query"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

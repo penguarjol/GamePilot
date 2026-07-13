@@ -245,3 +245,39 @@ export interface DiscoveredInstance {
   loader_type: string | null;
   mod_count: number;
 }
+
+export interface ModSearchResult {
+  project_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  author: string;
+  downloads: number;
+  icon_url: string | null;
+  categories: string[];
+  latest_version: string | null;
+}
+
+export interface ModVersion {
+  id: string;
+  version_number: string;
+  name: string;
+  game_versions: string[];
+  loaders: string[];
+  downloads: number;
+  files: ModFile[];
+}
+
+export interface ModFile {
+  url: string;
+  filename: string;
+  size: number;
+  primary: boolean;
+}
+
+export interface InstallResult {
+  success: boolean;
+  filename: string;
+  installed_path: string;
+  message: string;
+}

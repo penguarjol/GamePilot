@@ -373,6 +373,70 @@ fn get_session_report(
     sessions::generate_report(&app.db, &session_id)
 }
 
+// --- Mod Store (Modrinth) ---
+
+#[tauri::command]
+async fn search_modrinth_mods(
+    query: String,
+    mc_version: Option<String>,
+    loader: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<minecraft::modstore::ModSearchResult>, String> {
+    minecraft::modstore::search_mods(
+        &query,
+        mc_version.as_deref(),
+        loader.as_deref(),
+        limit.unwrap_or(20),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn get_modrinth_mod_versions(
+    project_id: String,
+    mc_version: Option<String>,
+    loader: Option<String>,
+) -> Result<Vec<minecraft::modstore::ModVersion>, String> {
+    minecraft::modstore::get_mod_versions(
+        &project_id,
+        mc_version.as_deref(),
+        loader.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn install_modrinth_mod(
+    download_url: String,
+    filename: String,
+    mods_dir: String,
+) -> Result<minecraft::modstore::InstallResult, String> {
+    minecraft::modstore::install_mod(
+        &download_url,
+        &filename,
+        std::path::Path::new(&mods_dir),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn remove_mod(mods_dir: String, filename: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        minecraft::modstore::remove_mod(std::path::Path::new(&mods_dir), &filename)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn enable_mod(mods_dir: String, filename: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || {
+        minecraft::modstore::enable_mod(std::path::Path::new(&mods_dir), &filename)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // --- Backup / Rollback ---
 
 #[tauri::command]
@@ -735,6 +799,11 @@ pub fn run() {
             tail_game_log,
             store_telemetry_summary,
             get_telemetry_summaries,
+            search_modrinth_mods,
+            get_modrinth_mod_versions,
+            install_modrinth_mod,
+            remove_mod,
+            enable_mod,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

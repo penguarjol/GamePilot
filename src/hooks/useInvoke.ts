@@ -23,7 +23,7 @@ export function useInvoke<T>(command: string) {
         return result;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        setState({ data: null, loading: false, error: message });
+        setState((prev) => ({ ...prev, loading: false, error: message }));
         throw err;
       }
     },

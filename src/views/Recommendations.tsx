@@ -128,7 +128,7 @@ export function Recommendations() {
               {filtered.map((r) => {
                 const status = getRecStatus(r.id);
                 return (
-                  <Card key={r.id}>
+                  <Card key={r.id} className={`transition-opacity duration-300 ${status !== "new" ? "opacity-60" : ""}`}>
                     <CardContent className="pt-4 space-y-3">
                       <div className="flex flex-wrap gap-1.5">
                         <Badge variant={r.severity === "error" ? "destructive" : "secondary"}>{r.severity}</Badge>

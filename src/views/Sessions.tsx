@@ -24,6 +24,8 @@ export function Sessions() {
   const [gameRunning, setGameRunning] = useState<boolean | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const samplesRef = useRef<{ cpu: number[]; ram: number[] }>({ cpu: [], ram: [] });
+  const sessionsDataRef = useRef(sessions.data);
+  useEffect(() => { sessionsDataRef.current = sessions.data; }, [sessions.data]);
 
   useEffect(() => {
     sessions.execute();
@@ -46,7 +48,7 @@ export function Sessions() {
           const running = await invoke<boolean>("is_game_running", { processName: "java" });
           setGameRunning(running);
           if (!running) {
-            const active = sessions.data?.find((s) => s.status === "active");
+            const active = sessionsDataRef.current?.find((s) => s.status === "active");
             if (active) {
               const { cpu, ram } = samplesRef.current;
               if (cpu.length > 0) {
@@ -61,7 +63,7 @@ export function Sessions() {
                 }).catch(() => {});
               }
               await invoke<Session>("end_session", { sessionId: active.id });
-              await sessions.execute();
+              try { await sessions.execute(); } catch { /* preserved by useInvoke */ }
             }
           }
         } catch { /* ignore */ }
@@ -108,11 +110,15 @@ export function Sessions() {
     }
   };
 
+  const handleRefresh = async () => {
+    try { await sessions.execute(); } catch { /* useInvoke preserves data */ }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Sessions</h1>
-        <Button variant="secondary" onClick={() => sessions.execute()} disabled={sessions.loading}>
+        <Button variant="secondary" onClick={handleRefresh} disabled={sessions.loading}>
           Refresh
         </Button>
       </div>

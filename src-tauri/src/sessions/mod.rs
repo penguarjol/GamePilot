@@ -114,7 +114,7 @@ pub fn get_session(db: &Database, session_id: &str) -> Result<Session, String> {
     ).map_err(|e| format!("Session not found: {}", e))
 }
 
-pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Vec<Session> {
+pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Result<Vec<Session>, String> {
     let conn = db.conn();
 
     let query = match instance_id {
@@ -122,7 +122,7 @@ pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Vec<Session> {
         None => "SELECT id, instance_id, started_at, ended_at, duration_secs, launch_method, cpu_avg_percent, ram_avg_mb, ram_peak_mb, status, notes FROM sessions ORDER BY started_at DESC LIMIT 50",
     };
 
-    let mut stmt = conn.prepare(query).unwrap();
+    let mut stmt = conn.prepare(query).map_err(|e| format!("DB error: {}", e))?;
 
     let params: Vec<Box<dyn rusqlite::types::ToSql>> = match instance_id {
         Some(id) => vec![Box::new(id.to_string())],
@@ -131,7 +131,7 @@ pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Vec<Session> {
 
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-    stmt.query_map(param_refs.as_slice(), |row| {
+    let sessions = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(Session {
             id: row.get(0)?,
             instance_id: row.get(1)?,
@@ -146,9 +146,11 @@ pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Vec<Session> {
             notes: row.get(10)?,
         })
     })
-    .unwrap()
+    .map_err(|e| format!("DB query error: {}", e))?
     .filter_map(|r| r.ok())
-    .collect()
+    .collect();
+
+    Ok(sessions)
 }
 
 pub fn generate_report(db: &Database, session_id: &str) -> Result<SessionReport, String> {

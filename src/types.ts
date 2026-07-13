@@ -245,12 +245,3 @@ export interface DiscoveredInstance {
   loader_type: string | null;
   mod_count: number;
 }
-
-export interface DiscoveredInstance {
-  name: string;
-  path: string;
-  launcher: string;
-  minecraft_version: string | null;
-  loader_type: string | null;
-  mod_count: number;
-}

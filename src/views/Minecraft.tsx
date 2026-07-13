@@ -31,6 +31,7 @@ import type {
   Recommendation,
   LaunchResult,
   ConfigAnalysis,
+  ConfigRecommendation,
   ModpackHealth,
 } from "@/types";
 
@@ -46,6 +47,7 @@ export function Minecraft() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredInstance[]>([]);
   const [discovering, setDiscovering] = useState(false);
+  const [recStatusMap, setRecStatusMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     saved.execute();
@@ -206,9 +208,31 @@ export function Minecraft() {
   const updateRecStatus = async (recId: string, status: string) => {
     try {
       await invoke("update_recommendation_status", { recommendationId: recId, status });
-      toast.success(`Status updated: ${status.replace("_", " ")}`);
+      setRecStatusMap((prev) => ({ ...prev, [recId]: status }));
+      toast.success(`Recommendation ${status.replace("_", " ")}`);
     } catch (err) {
-      toast.error(String(err));
+      toast.error(`Failed: ${err}`);
+    }
+  };
+
+  const applyConfig = async (cr: ConfigRecommendation) => {
+    if (!selectedInstance) return;
+    try {
+      const targetPath = `${selectedInstance.path}/.minecraft/${cr.file}`;
+      await invoke("apply_config_change", {
+        filePath: targetPath,
+        key: cr.key,
+        newValue: cr.recommended_value,
+        recommendationId: `config-${cr.key}`,
+      });
+      toast.success(`Applied: ${cr.key} = ${cr.recommended_value}`);
+      const config = await invoke<ConfigAnalysis>("analyze_configs", {
+        instancePath: selectedInstance.path,
+        modCount: selectedInstance.mod_count,
+      });
+      setConfigAnalysis(config);
+    } catch (err) {
+      toast.error(`Failed to apply: ${err}`);
     }
   };
 
@@ -481,6 +505,11 @@ export function Minecraft() {
                           <span className="text-primary font-medium">{cr.recommended_value}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">{cr.reason}</p>
+                        <div className="pt-1">
+                          <Button size="sm" onClick={() => applyConfig(cr)}>
+                            Apply
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </CardContent>
@@ -494,28 +523,39 @@ export function Minecraft() {
                     <CardTitle>Recommendations</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {recommendations.map((r) => (
-                      <div key={r.id} className="rounded-lg border border-border p-4 space-y-2">
-                        <div className="flex flex-wrap gap-1.5">
-                          <Badge variant={r.severity === "error" ? "destructive" : "secondary"}>{r.severity}</Badge>
-                          <Badge variant="outline">{r.confidence}</Badge>
-                          <Badge variant="outline">risk: {r.risk_level}</Badge>
-                        </div>
-                        <h4 className="font-medium text-sm">{r.title}</h4>
-                        <p className="text-sm text-muted-foreground">{r.description}</p>
-                        <p className="text-xs text-muted-foreground">{r.evidence}</p>
-                        <div className="flex gap-2 pt-1">
-                          <Button size="sm" onClick={() => updateRecStatus(r.id, "accepted")}>Accept</Button>
-                          <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "ignored_once")}>Ignore</Button>
-                          <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "deferred")}>Defer</Button>
-                          {r.action_type === "open_link" && r.action_data && (
-                            <a href={r.action_data} target="_blank" rel="noreferrer">
-                              <Button size="sm" variant="secondary">Open Link</Button>
-                            </a>
+                    {recommendations.map((r) => {
+                      const status = recStatusMap[r.id];
+                      return (
+                        <div
+                          key={r.id}
+                          className={`rounded-lg border border-border p-4 space-y-2 transition-opacity ${status ? "opacity-60" : ""}`}
+                        >
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant={r.severity === "error" ? "destructive" : "secondary"}>{r.severity}</Badge>
+                            <Badge variant="outline">{r.confidence}</Badge>
+                            <Badge variant="outline">risk: {r.risk_level}</Badge>
+                            {status && (
+                              <Badge variant="default">{status.replace("_", " ")}</Badge>
+                            )}
+                          </div>
+                          <h4 className="font-medium text-sm">{r.title}</h4>
+                          <p className="text-sm text-muted-foreground">{r.description}</p>
+                          <p className="text-xs text-muted-foreground">{r.evidence}</p>
+                          {!status && (
+                            <div className="flex gap-2 pt-1">
+                              <Button size="sm" onClick={() => updateRecStatus(r.id, "accepted")}>Accept</Button>
+                              <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "ignored_once")}>Ignore</Button>
+                              <Button size="sm" variant="secondary" onClick={() => updateRecStatus(r.id, "deferred")}>Defer</Button>
+                              {r.action_type === "open_link" && r.action_data && (
+                                <a href={r.action_data} target="_blank" rel="noreferrer">
+                                  <Button size="sm" variant="secondary">Open Link</Button>
+                                </a>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}

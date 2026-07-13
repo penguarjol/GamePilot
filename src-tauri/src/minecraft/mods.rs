@@ -103,6 +103,15 @@ fn recommended_performance_mods() -> Vec<PerformanceModRecommendation> {
             url: "https://modrinth.com/mod/clumps".to_string(),
             loaders: vec!["Forge".into(), "NeoForge".into(), "Fabric".into()],
         },
+        PerformanceModRecommendation {
+            mod_name: "Distant Horizons".to_string(),
+            mod_id: "distanthorizons".to_string(),
+            reason: "Renders far terrain using LOD meshes, dramatically improving visual range without GPU cost. Requires client-side installation.".to_string(),
+            expected_impact: "High — massively extended render distance with minimal performance cost".to_string(),
+            confidence: "high".to_string(),
+            url: "https://modrinth.com/mod/distanthorizons".to_string(),
+            loaders: vec!["Forge".into(), "NeoForge".into(), "Fabric".into()],
+        },
     ]
 }
 

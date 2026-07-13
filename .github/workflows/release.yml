@@ -32,17 +32,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri app
-        run: pnpm tauri build
+      - uses: tauri-apps/tauri-action@v0
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
-          name: ${{ github.ref_name }}
-          draft: false
+          tagName: ${{ github.ref_name }}
+          releaseName: "GamePilot ${{ github.ref_name }}"
+          releaseBody: "See the assets to download and install GamePilot."
+          releaseDraft: false
           prerelease: false
-          files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          includeUpdaterJson: true

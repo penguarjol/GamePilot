@@ -73,13 +73,13 @@ pub fn save_rollback_point(db: &Database, rp: &RollbackPoint) -> Result<(), Stri
     Ok(())
 }
 
-pub fn get_rollback_points(db: &Database, recommendation_id: &str) -> Vec<RollbackPoint> {
+pub fn get_rollback_points(db: &Database, recommendation_id: &str) -> Result<Vec<RollbackPoint>, String> {
     let conn = db.conn();
     let mut stmt = conn
         .prepare("SELECT id, recommendation_id, file_path, original_hash, backup_path, created_at FROM rollback_points WHERE recommendation_id = ?1 AND restored_at IS NULL ORDER BY created_at DESC")
-        .unwrap();
+        .map_err(|e| format!("DB error: {}", e))?;
 
-    stmt.query_map(rusqlite::params![recommendation_id], |row| {
+    let points = stmt.query_map(rusqlite::params![recommendation_id], |row| {
         Ok(RollbackPoint {
             id: row.get(0)?,
             recommendation_id: row.get(1)?,
@@ -89,7 +89,50 @@ pub fn get_rollback_points(db: &Database, recommendation_id: &str) -> Vec<Rollba
             created_at: row.get(5)?,
         })
     })
-    .unwrap()
+    .map_err(|e| format!("DB query error: {}", e))?
     .filter_map(|r| r.ok())
-    .collect()
+    .collect();
+
+    Ok(points)
+}
+
+pub fn apply_config_change(
+    file_path: &Path,
+    key: &str,
+    new_value: &str,
+    recommendation_id: &str,
+    db: &Database,
+) -> Result<RollbackPoint, String> {
+    let rp = backup_file(file_path, recommendation_id)?;
+    save_rollback_point(db, &rp)?;
+
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+
+    let mut modified = String::new();
+    let mut found = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            if let Some((k, _)) = trimmed.split_once('=').or_else(|| trimmed.split_once(':')) {
+                if k.trim() == key {
+                    let sep = if trimmed.contains('=') { "=" } else { ":" };
+                    modified.push_str(&format!("{}{}{}\n", key, sep, new_value));
+                    found = true;
+                    continue;
+                }
+            }
+        }
+        modified.push_str(line);
+        modified.push('\n');
+    }
+
+    if !found {
+        return Err(format!("Key '{}' not found in config file", key));
+    }
+
+    std::fs::write(file_path, &modified)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(rp)
 }

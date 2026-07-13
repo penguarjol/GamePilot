@@ -108,4 +108,16 @@ CREATE TABLE IF NOT EXISTS ignore_rules (
     reason TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS telemetry_summaries (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    minute_ts TEXT NOT NULL,
+    cpu_avg REAL,
+    ram_avg_mb REAL,
+    ram_peak_mb REAL,
+    hog_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
 "#;

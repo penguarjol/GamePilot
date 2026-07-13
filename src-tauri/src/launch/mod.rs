@@ -23,7 +23,7 @@ pub fn launch_instance(profile: &LaunchProfile) -> LaunchResult {
 
     match launcher.as_str() {
         "prism launcher" | "multimc" => launch_via_launcher(profile, "prismlauncher"),
-        "curseforge" => launch_via_launcher(profile, "curseforge"),
+        "curseforge" => launch_via_curseforge(profile),
         _ => launch_via_folder_open(profile),
     }
 }
@@ -77,6 +77,47 @@ fn launch_via_launcher(profile: &LaunchProfile, _launcher_exe: &str) -> LaunchRe
                  Open the instance folder to launch manually.",
                 profile.launcher
             ),
+            session_id: Some(session_id),
+        }
+    }
+}
+
+fn launch_via_curseforge(_profile: &LaunchProfile) -> LaunchResult {
+    let session_id = uuid::Uuid::new_v4().to_string();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        let cf_exe = format!(
+            "{}\\Programs\\CurseForge\\CurseForge.exe",
+            std::env::var("LOCALAPPDATA").unwrap_or_default()
+        );
+
+        if std::path::Path::new(&cf_exe).exists() {
+            match Command::new(&cf_exe)
+                .creation_flags(0x08000000)
+                .spawn()
+            {
+                Ok(_) => return LaunchResult {
+                    success: true,
+                    method: "CurseForge App".to_string(),
+                    message: "Opened CurseForge app. Launch your instance from there.".to_string(),
+                    session_id: Some(session_id),
+                },
+                Err(_) => {}
+            }
+        }
+
+        launch_via_folder_open(_profile)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        LaunchResult {
+            success: true,
+            method: "Delegated (dev mode)".to_string(),
+            message: "On Windows, this would open the CurseForge app.".to_string(),
             session_id: Some(session_id),
         }
     }

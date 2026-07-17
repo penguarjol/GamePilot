@@ -29,7 +29,13 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libpipewire-0.3-dev \
+            libxcb1-dev \
+            libxcb-randr0-dev \
+            libxcb-shm0-dev \
+            libdrm-dev \
+            libgbm-dev
 
       - uses: pnpm/action-setup@v4
         with:

@@ -8,11 +8,13 @@ pub mod governor;
 pub mod hardware;
 pub mod launch;
 pub mod minecraft;
+pub mod overlay;
 pub mod platform;
 pub mod recommendations;
 pub mod sessions;
 pub mod sharing;
 pub mod telemetry;
+pub mod vision;
 
 use db::Database;
 use std::path::PathBuf;
@@ -93,6 +95,8 @@ async fn get_governor_status() -> Result<governor::GovernorStatus, String> {
             self_ram_mb: metrics.ram_mb,
             telemetry_interval_ms: governor::telemetry_interval_ms(),
             game_running,
+            vision_mode: format!("{:?}", governor::current_vision_mode()),
+            capture_interval_ms: governor::capture_interval_ms(),
         }
     })
     .await
@@ -421,6 +425,97 @@ fn launch_instance(
     }
 
     result
+}
+
+#[tauri::command]
+fn auto_detect_and_manage_session(
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Option<serde_json::Value>, String> {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes();
+
+    let known_games: &[(&str, &str)] = &[
+        ("java", "minecraft"),
+        ("javaw", "minecraft"),
+        ("LeagueClient", "league"),
+        ("League of Legends", "league"),
+        ("EscapeFromTarkov", "tarkov"),
+        ("PathOfExile", "poe"),
+        ("rs2client", "runescape"),
+        ("runelite", "runescape"),
+    ];
+
+    let detected_game = sys.processes().values().find_map(|p| {
+        let name = p.name().to_lowercase();
+        known_games.iter().find_map(|(pattern, game_id)| {
+            if name.contains(&pattern.to_lowercase()) {
+                Some((game_id.to_string(), p.name().to_string()))
+            } else {
+                None
+            }
+        })
+    });
+
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let active_session: Option<String> = conn
+        .query_row(
+            "SELECT id FROM sessions WHERE status = 'active' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+
+    match (active_session, detected_game) {
+        (None, Some((game_id, process_name))) => {
+            let session = sessions::create_session(
+                &app.db,
+                &format!("auto-{}", game_id),
+                &format!("Auto-detected: {}", process_name),
+            )
+            .map_err(|e| format!("Session create failed: {}", e))?;
+
+            events::emit(
+                &app.app_handle,
+                &events::GamePilotEvent::GameLaunched {
+                    instance_id: format!("auto-{}", game_id),
+                    session_id: session.id.clone(),
+                    method: "auto-detected".to_string(),
+                },
+            );
+
+            Ok(Some(serde_json::json!({
+                "action": "session_started",
+                "session_id": session.id,
+                "game": game_id,
+                "process": process_name,
+            })))
+        }
+        (Some(session_id), None) => {
+            let session = sessions::end_session(&app.db, &session_id)
+                .map_err(|e| format!("Session end failed: {}", e))?;
+
+            events::emit(
+                &app.app_handle,
+                &events::GamePilotEvent::GameExited {
+                    instance_id: session.instance_id.clone(),
+                    session_id: session.id.clone(),
+                },
+            );
+
+            Ok(Some(serde_json::json!({
+                "action": "session_ended",
+                "session_id": session.id,
+            })))
+        }
+        (Some(session_id), Some((game_id, _))) => Ok(Some(serde_json::json!({
+            "action": "active",
+            "session_id": session_id,
+            "game": game_id,
+        }))),
+        (None, None) => Ok(None),
+    }
 }
 
 #[tauri::command]
@@ -1312,6 +1407,52 @@ async fn test_discord_webhook(webhook_url: String) -> Result<(), String> {
     sharing::send_test_to_discord(&webhook_url).await
 }
 
+// --- Vision ---
+
+#[tauri::command]
+async fn capture_screen() -> Result<vision::capture::CaptureResult, String> {
+    tokio::task::spawn_blocking(|| {
+        let (result, _bytes) = vision::capture::capture_screen()?;
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn detect_running_game() -> Result<Option<vision::game_detect::DetectedGame>, String> {
+    tokio::task::spawn_blocking(vision::game_detect::detect_running_game)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn detect_all_running_games() -> Result<Vec<vision::game_detect::DetectedGame>, String> {
+    tokio::task::spawn_blocking(vision::game_detect::detect_all_running_games)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// --- Overlay ---
+
+#[tauri::command]
+fn toggle_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    overlay::toggle_overlay(&app.app_handle)
+}
+
+#[tauri::command]
+fn show_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    overlay::show_overlay(&app.app_handle)
+}
+
+#[tauri::command]
+fn hide_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    overlay::hide_overlay(&app.app_handle)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -1367,6 +1508,7 @@ pub fn run() {
             detect_java,
             launch_instance,
             store_session_telemetry,
+            auto_detect_and_manage_session,
             end_session,
             get_sessions,
             get_session_report,
@@ -1400,6 +1542,12 @@ pub fn run() {
             import_optimization_profile,
             share_to_discord,
             test_discord_webhook,
+            capture_screen,
+            detect_running_game,
+            detect_all_running_games,
+            toggle_overlay,
+            show_overlay,
+            hide_overlay,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

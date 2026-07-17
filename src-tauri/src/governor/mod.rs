@@ -22,6 +22,44 @@ impl From<u8> for GovernorMode {
 }
 
 static GOVERNOR_MODE: AtomicU8 = AtomicU8::new(0);
+static VISION_MODE: AtomicU8 = AtomicU8::new(0);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[repr(u8)]
+pub enum VisionMode {
+    Active = 0,
+    Reduced = 1,
+    Minimal = 2,
+    Disabled = 3,
+}
+
+impl From<u8> for VisionMode {
+    fn from(v: u8) -> Self {
+        match v {
+            1 => VisionMode::Reduced,
+            2 => VisionMode::Minimal,
+            3 => VisionMode::Disabled,
+            _ => VisionMode::Active,
+        }
+    }
+}
+
+pub fn current_vision_mode() -> VisionMode {
+    VisionMode::from(VISION_MODE.load(Ordering::Relaxed))
+}
+
+pub fn set_vision_mode(mode: VisionMode) {
+    VISION_MODE.store(mode as u8, Ordering::Relaxed);
+}
+
+pub fn capture_interval_ms() -> u64 {
+    match current_vision_mode() {
+        VisionMode::Active => 3000,
+        VisionMode::Reduced => 10000,
+        VisionMode::Minimal => 30000,
+        VisionMode::Disabled => u64::MAX,
+    }
+}
 
 pub fn current_mode() -> GovernorMode {
     GovernorMode::from(GOVERNOR_MODE.load(Ordering::Relaxed))
@@ -48,6 +86,7 @@ pub fn budget_for_mode(mode: GovernorMode) -> Budget {
 pub fn evaluate(self_cpu: f32, self_ram_mb: f64, game_running: bool) -> GovernorMode {
     if !game_running {
         set_mode(GovernorMode::Normal);
+        set_vision_mode(VisionMode::Active);
         return GovernorMode::Normal;
     }
 
@@ -61,7 +100,16 @@ pub fn evaluate(self_cpu: f32, self_ram_mb: f64, game_running: bool) -> Governor
         GovernorMode::Normal
     };
 
+    let vision = if self_cpu > 2.0 {
+        VisionMode::Disabled
+    } else if self_cpu > 1.0 {
+        VisionMode::Minimal
+    } else {
+        VisionMode::Reduced
+    };
+
     set_mode(mode);
+    set_vision_mode(vision);
     mode
 }
 
@@ -81,4 +129,6 @@ pub struct GovernorStatus {
     pub self_ram_mb: f64,
     pub telemetry_interval_ms: u64,
     pub game_running: bool,
+    pub vision_mode: String,
+    pub capture_interval_ms: u64,
 }

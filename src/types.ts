@@ -302,6 +302,16 @@ export interface GovernorStatus {
   self_ram_mb: number;
   telemetry_interval_ms: number;
   game_running: boolean;
+  vision_mode: string;
+  capture_interval_ms: number;
+}
+
+export interface DetectedGame {
+  game_id: string;
+  game_name: string;
+  process_name: string;
+  window_title: string | null;
+  is_running: boolean;
 }
 
 export interface LogEvent {

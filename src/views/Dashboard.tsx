@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { useInvoke } from "@/hooks/useInvoke";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +44,17 @@ export function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const sessionPoller = setInterval(async () => {
+      try {
+        await invoke("auto_detect_and_manage_session");
+      } catch {
+        /* polling failure is non-fatal */
+      }
+    }, 10000);
+    return () => clearInterval(sessionPoller);
+  }, []);
+
   const runDiagnostics = async () => {
     await Promise.all([hw.execute(), procs.execute()]);
   };
@@ -68,9 +80,14 @@ export function Dashboard() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-        <Button onClick={runDiagnostics} disabled={hw.loading || procs.loading}>
-          {hw.loading || procs.loading ? "Scanning..." : "Run Diagnostics"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => invoke("toggle_overlay")} variant="outline" size="sm">
+            Toggle Overlay
+          </Button>
+          <Button onClick={runDiagnostics} disabled={hw.loading || procs.loading}>
+            {hw.loading || procs.loading ? "Scanning..." : "Run Diagnostics"}
+          </Button>
+        </div>
       </div>
 
       {sessions.data?.some((s) => s.status === "active") && (

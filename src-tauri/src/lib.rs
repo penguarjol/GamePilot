@@ -395,12 +395,25 @@ fn launch_instance(
     instance_path: String,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> launch::LaunchResult {
+    let (saved_java_path, saved_jvm_args) = state
+        .lock()
+        .ok()
+        .and_then(|app| {
+            let conn = app.db.conn();
+            conn.query_row(
+                "SELECT java_path, jvm_args FROM launch_profiles WHERE instance_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+                rusqlite::params![instance_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            ).ok()
+        })
+        .unwrap_or((None, None));
+
     let profile = launch::LaunchProfile {
         instance_id: instance_id.clone(),
         launcher,
         instance_path,
-        java_path: None,
-        jvm_args: None,
+        java_path: saved_java_path,
+        jvm_args: saved_jvm_args,
     };
 
     let mut result = launch::launch_instance(&profile);
@@ -572,6 +585,26 @@ async fn get_recommendations_for_path(
     }
 
     Ok(recs)
+}
+
+#[tauri::command]
+fn get_recommendation_statuses(
+    instance_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+    let mut stmt = conn.prepare(
+        "SELECT id, status FROM recommendations WHERE instance_id = ?1 AND status != 'new'"
+    ).map_err(|e| format!("DB error: {}", e))?;
+    let mut map = std::collections::HashMap::new();
+    let rows = stmt.query_map(rusqlite::params![instance_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(|e| format!("Query error: {}", e))?;
+    for row in rows.flatten() {
+        map.insert(row.0, row.1);
+    }
+    Ok(map)
 }
 
 #[tauri::command]
@@ -1068,10 +1101,31 @@ fn store_telemetry_summary(
     ram_avg: f64,
     ram_peak: f64,
     hog_count: i32,
+    fps_avg: Option<f32>,
+    fps_low_1pct: Option<f32>,
+    tps_avg: Option<f32>,
     state: tauri::State<'_, Mutex<AppState>>,
 ) -> Result<(), String> {
     let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    telemetry::store_summary(&app.db, &session_id, cpu_avg, ram_avg, ram_peak, hog_count)
+    telemetry::store_summary(
+        &app.db, &session_id, cpu_avg, ram_avg, ram_peak, hog_count,
+        fps_avg, fps_low_1pct, tps_avg,
+    )
+}
+
+#[tauri::command]
+fn store_fps_observation(
+    session_id: String,
+    fps_avg: Option<f32>,
+    fps_low: Option<f32>,
+    tps_avg: Option<f32>,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    telemetry::store_summary(
+        &app.db, &session_id, 0.0, 0.0, 0.0, 0,
+        fps_avg, fps_low, tps_avg,
+    )
 }
 
 #[tauri::command]
@@ -1128,6 +1182,179 @@ fn get_optimization_history(
     Ok(rows)
 }
 
+// --- Recommendation Outcomes ---
+
+#[tauri::command]
+fn evaluate_recommendation_outcomes(
+    session_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let session = sessions::get_session(&app.db, &session_id)?;
+
+    let prev_session: Option<sessions::Session> = conn
+        .query_row(
+            "SELECT id, instance_id, started_at, ended_at, duration_secs, launch_method, \
+             cpu_avg_percent, ram_avg_mb, ram_peak_mb, status, notes \
+             FROM sessions WHERE instance_id = ?1 AND id != ?2 AND status = 'completed' \
+             ORDER BY started_at DESC LIMIT 1",
+            rusqlite::params![session.instance_id, session_id],
+            |row| {
+                Ok(sessions::Session {
+                    id: row.get(0)?,
+                    instance_id: row.get(1)?,
+                    started_at: row.get(2)?,
+                    ended_at: row.get(3)?,
+                    duration_secs: row.get(4)?,
+                    launch_method: row.get(5)?,
+                    cpu_avg_percent: row.get(6)?,
+                    ram_avg_mb: row.get(7)?,
+                    ram_peak_mb: row.get(8)?,
+                    status: row.get(9)?,
+                    notes: row.get(10)?,
+                })
+            },
+        )
+        .ok();
+
+    let prev = match prev_session {
+        Some(p) => p,
+        None => return Ok(vec![]),
+    };
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, title, category FROM recommendations \
+             WHERE instance_id = ?1 AND status = 'applied'",
+        )
+        .map_err(|e| format!("DB error: {}", e))?;
+
+    let applied_recs: Vec<(String, String, String)> = stmt
+        .query_map(rusqlite::params![session.instance_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| format!("Query error: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if applied_recs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let metrics: Vec<(&str, Option<f64>, Option<f64>)> = vec![
+        ("cpu_avg_percent", prev.cpu_avg_percent, session.cpu_avg_percent),
+        ("ram_avg_mb", prev.ram_avg_mb, session.ram_avg_mb),
+        ("ram_peak_mb", prev.ram_peak_mb, session.ram_peak_mb),
+    ];
+
+    let mut outcomes = Vec::new();
+
+    for (rec_id, _title, _category) in &applied_recs {
+        for (metric_name, before, after) in &metrics {
+            let (val_before, val_after) = match (before, after) {
+                (Some(b), Some(a)) => (*b, *a),
+                _ => continue,
+            };
+
+            // Lower is better for all three metrics
+            let improvement_pct = if val_before > 0.0 {
+                ((val_before - val_after) / val_before) * 100.0
+            } else {
+                0.0
+            };
+
+            let outcome = if improvement_pct > 5.0 {
+                "positive"
+            } else if improvement_pct < -5.0 {
+                "negative"
+            } else {
+                "neutral"
+            };
+
+            let outcome_id = uuid::Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT OR IGNORE INTO recommendation_outcomes \
+                 (id, recommendation_id, session_before_id, session_after_id, \
+                  metric_name, value_before, value_after, improvement_percent, outcome) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    outcome_id,
+                    rec_id,
+                    prev.id,
+                    session.id,
+                    metric_name,
+                    val_before,
+                    val_after,
+                    improvement_pct,
+                    outcome,
+                ],
+            )
+            .ok();
+
+            outcomes.push(serde_json::json!({
+                "id": outcome_id,
+                "recommendation_id": rec_id,
+                "metric_name": metric_name,
+                "value_before": val_before,
+                "value_after": val_after,
+                "improvement_percent": improvement_pct,
+                "outcome": outcome,
+            }));
+        }
+    }
+
+    Ok(outcomes)
+}
+
+#[tauri::command]
+fn get_recommendation_outcomes(
+    instance_id: Option<String>,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let (query, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match &instance_id {
+        Some(id) => (
+            "SELECT ro.recommendation_id, ro.metric_name, ro.improvement_percent, ro.outcome, \
+             r.title, r.category \
+             FROM recommendation_outcomes ro \
+             JOIN recommendations r ON r.id = ro.recommendation_id \
+             WHERE r.instance_id = ?1 \
+             ORDER BY ro.recorded_at DESC",
+            vec![Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>],
+        ),
+        None => (
+            "SELECT ro.recommendation_id, ro.metric_name, ro.improvement_percent, ro.outcome, \
+             r.title, r.category \
+             FROM recommendation_outcomes ro \
+             JOIN recommendations r ON r.id = ro.recommendation_id \
+             ORDER BY ro.recorded_at DESC",
+            vec![],
+        ),
+    };
+
+    let mut stmt = conn.prepare(query).map_err(|e| format!("DB error: {}", e))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok(serde_json::json!({
+                "recommendation_id": row.get::<_, String>(0)?,
+                "metric_name": row.get::<_, String>(1)?,
+                "improvement_percent": row.get::<_, Option<f64>>(2)?,
+                "outcome": row.get::<_, String>(3)?,
+                "title": row.get::<_, String>(4)?,
+                "category": row.get::<_, String>(5)?,
+            }))
+        })
+        .map_err(|e| format!("Query error: {}", e))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(rows)
+}
+
 // --- Data Export ---
 
 #[tauri::command]
@@ -1177,6 +1404,132 @@ fn export_user_data(
     }))
 }
 
+// --- Launch Profiles ---
+
+#[tauri::command]
+fn save_launch_profile(
+    instance_id: String,
+    name: String,
+    java_path: Option<String>,
+    jvm_args: Option<String>,
+    xmx_mb: Option<i64>,
+    xms_mb: Option<i64>,
+    pre_launch_actions: Option<String>,
+    auto_apply: Option<bool>,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<String, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let existing_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM launch_profiles WHERE instance_id = ?1 AND name = ?2",
+            rusqlite::params![instance_id, name],
+            |row| row.get(0),
+        )
+        .ok();
+
+    let profile_id = existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let auto_apply_int: i64 = if auto_apply.unwrap_or(false) { 1 } else { 0 };
+
+    conn.execute(
+        "INSERT OR REPLACE INTO launch_profiles (id, instance_id, name, java_path, jvm_args, xmx_mb, xms_mb, pre_launch_actions, auto_apply, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))",
+        rusqlite::params![profile_id, instance_id, name, java_path, jvm_args, xmx_mb, xms_mb, pre_launch_actions, auto_apply_int],
+    ).map_err(|e| format!("Failed to save launch profile: {}", e))?;
+
+    Ok(profile_id)
+}
+
+#[tauri::command]
+fn get_launch_profile(
+    instance_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Option<serde_json::Value>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    let result = conn.query_row(
+        "SELECT id, instance_id, name, java_path, jvm_args, xmx_mb, xms_mb, pre_launch_actions, auto_apply, created_at, updated_at \
+         FROM launch_profiles WHERE instance_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+        rusqlite::params![instance_id],
+        |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "instance_id": row.get::<_, String>(1)?,
+                "name": row.get::<_, String>(2)?,
+                "java_path": row.get::<_, Option<String>>(3)?,
+                "jvm_args": row.get::<_, Option<String>>(4)?,
+                "xmx_mb": row.get::<_, Option<i64>>(5)?,
+                "xms_mb": row.get::<_, Option<i64>>(6)?,
+                "pre_launch_actions": row.get::<_, Option<String>>(7)?,
+                "auto_apply": row.get::<_, i64>(8)? != 0,
+                "created_at": row.get::<_, String>(9)?,
+                "updated_at": row.get::<_, String>(10)?,
+            }))
+        },
+    );
+
+    match result {
+        Ok(profile) => Ok(Some(profile)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to get launch profile: {}", e)),
+    }
+}
+
+#[tauri::command]
+fn delete_launch_profile(
+    profile_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+    conn.execute(
+        "DELETE FROM launch_profiles WHERE id = ?1",
+        rusqlite::params![profile_id],
+    ).map_err(|e| format!("Failed to delete launch profile: {}", e))?;
+    Ok(())
+}
+
+// --- Process Observations ---
+
+#[tauri::command]
+fn record_process_observation(
+    session_id: String,
+    processes_json: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let processes: Vec<serde_json::Value> =
+        serde_json::from_str(&processes_json).map_err(|e| e.to_string())?;
+
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    let conn = app.db.conn();
+
+    for p in &processes {
+        let cpu = p.get("cpu_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let ram = p.get("ram_mb").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let is_hog = cpu > 15.0 || ram > 500.0;
+        if !is_hog {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO process_observations (id, session_id, name, pid, cpu_percent, ram_mb, category, is_resource_hog) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)",
+            rusqlite::params![
+                uuid::Uuid::new_v4().to_string(),
+                session_id,
+                p.get("name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                p.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i64,
+                cpu,
+                ram,
+                p.get("category").and_then(|v| v.as_str()).unwrap_or("unknown"),
+            ],
+        ).ok();
+    }
+
+    Ok(())
+}
+
 // --- Data Management ---
 
 #[tauri::command]
@@ -1186,11 +1539,14 @@ fn delete_all_data(
     let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
     let conn = app.db.conn();
     conn.execute_batch(
-        "DELETE FROM optimization_actions; \
+        "DELETE FROM recommendation_outcomes; \
+         DELETE FROM optimization_actions; \
          DELETE FROM telemetry_summaries; \
          DELETE FROM process_observations; \
          DELETE FROM rollback_points; \
          DELETE FROM recommendations; \
+         DELETE FROM launch_profiles; \
+         DELETE FROM hardware_snapshots; \
          DELETE FROM sessions; \
          DELETE FROM game_instances; \
          DELETE FROM ignore_rules; \
@@ -1232,6 +1588,49 @@ fn set_preference(
     )
     .map_err(|e| format!("Failed to set preference: {}", e))?;
     Ok(())
+}
+
+#[tauri::command]
+fn preview_config_change(
+    instance_path: String,
+    filename: String,
+    key: String,
+    new_value: String,
+) -> Result<serde_json::Value, String> {
+    let resolved = recommendations::resolve_config_path(
+        std::path::Path::new(&instance_path),
+        &filename,
+    );
+    let content = std::fs::read_to_string(&resolved)
+        .map_err(|e| format!("Cannot read file: {}", e))?;
+
+    let mut before_lines = Vec::new();
+    let mut after_lines = Vec::new();
+    let mut old_value_line: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        before_lines.push(line.to_string());
+
+        if let Some((k, _)) = trimmed.split_once('=').or_else(|| trimmed.split_once(':')) {
+            if k.trim() == key {
+                old_value_line = Some(line.to_string());
+                let sep = if trimmed.contains('=') { "=" } else { ":" };
+                after_lines.push(format!("{}{}{}", key, sep, new_value));
+                continue;
+            }
+        }
+        after_lines.push(line.to_string());
+    }
+
+    Ok(serde_json::json!({
+        "file": filename,
+        "before": before_lines.join("\n"),
+        "after": after_lines.join("\n"),
+        "key": key,
+        "old_value": old_value_line.unwrap_or_default(),
+        "new_value": new_value,
+    }))
 }
 
 #[tauri::command]
@@ -1474,6 +1873,22 @@ pub fn run() {
             let db = Database::open(&db_path).expect("Failed to open database");
             let handle = app.handle().clone();
 
+            let hw = hardware::collect_hardware_info();
+            let device_id = {
+                use sha2::Digest;
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(hw.hostname.as_bytes());
+                hasher.update(hw.cpu_model.as_bytes());
+                format!("dev-{}", hex::encode(&hasher.finalize()[..8]))
+            };
+            let conn = db.conn();
+            conn.execute(
+                "INSERT OR REPLACE INTO devices (id, hostname, os_name, os_version, cpu_model, cpu_cores, cpu_threads, gpu_model, gpu_vram_mb, ram_total_mb, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+                rusqlite::params![device_id, hw.hostname, hw.os_name, hw.os_version, hw.cpu_model, hw.cpu_cores, hw.cpu_threads, hw.gpu_model, hw.gpu_vram_mb, hw.ram_total_mb],
+            ).ok();
+            drop(conn);
+
             app.manage(Mutex::new(AppState { db, app_handle: handle }));
 
             Ok(())
@@ -1505,6 +1920,9 @@ pub fn run() {
             get_recommendations_for_path,
             update_recommendation_status,
             save_recommendation,
+            evaluate_recommendation_outcomes,
+            get_recommendation_outcomes,
+            get_recommendation_statuses,
             detect_java,
             launch_instance,
             store_session_telemetry,
@@ -1524,18 +1942,24 @@ pub fn run() {
             delete_all_data,
             get_preference,
             set_preference,
+            preview_config_change,
             apply_config_change,
             apply_config_change_auto,
             get_optimization_history,
             export_user_data,
             tail_game_log,
             store_telemetry_summary,
+            store_fps_observation,
             get_telemetry_summaries,
             search_modrinth_mods,
             get_modrinth_mod_versions,
             install_modrinth_mod,
             remove_mod,
             enable_mod,
+            save_launch_profile,
+            get_launch_profile,
+            delete_launch_profile,
+            record_process_observation,
             get_tarkov_ammo_data,
             search_tarkov_item,
             export_optimization_profile,

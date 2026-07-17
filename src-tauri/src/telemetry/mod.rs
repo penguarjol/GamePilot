@@ -16,6 +16,9 @@ pub struct TelemetrySummary {
     pub ram_avg_mb: Option<f64>,
     pub ram_peak_mb: Option<f64>,
     pub hog_count: Option<i32>,
+    pub fps_avg: Option<f32>,
+    pub fps_low_1pct: Option<f32>,
+    pub tps_avg: Option<f32>,
 }
 
 /// Tail the Minecraft latest.log file from a given position, returning new lines and the updated position
@@ -107,6 +110,42 @@ fn parse_log_line(line: &str) -> Option<LogEvent> {
     })
 }
 
+pub fn extract_fps_from_log(line: &str) -> Option<f32> {
+    let lower = line.to_lowercase();
+
+    if lower.contains("fps:") || lower.contains("fps =") {
+        let parts: Vec<&str> = lower.split("fps").collect();
+        if let Some(after) = parts.get(1) {
+            let num_str: String = after
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            return num_str.parse().ok();
+        }
+    }
+
+    None
+}
+
+pub fn extract_tps_from_log(line: &str) -> Option<f32> {
+    let lower = line.to_lowercase();
+
+    if lower.contains("tps:") || lower.contains("tps =") {
+        let parts: Vec<&str> = lower.split("tps").collect();
+        if let Some(after) = parts.get(1) {
+            let num_str: String = after
+                .chars()
+                .skip_while(|c| !c.is_ascii_digit())
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            return num_str.parse().ok();
+        }
+    }
+
+    None
+}
+
 pub fn find_log_path(instance_path: &Path) -> Option<PathBuf> {
     let candidates = [
         instance_path
@@ -130,11 +169,14 @@ pub fn store_summary(
     ram_avg: f64,
     ram_peak: f64,
     hog_count: i32,
+    fps_avg: Option<f32>,
+    fps_low_1pct: Option<f32>,
+    tps_avg: Option<f32>,
 ) -> Result<(), String> {
     let conn = db.conn();
     conn.execute(
-        "INSERT INTO telemetry_summaries (id, session_id, minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count) \
-         VALUES (?1, ?2, datetime('now'), ?3, ?4, ?5, ?6)",
+        "INSERT INTO telemetry_summaries (id, session_id, minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count, fps_avg, fps_low_1pct, tps_avg) \
+         VALUES (?1, ?2, datetime('now'), ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             uuid::Uuid::new_v4().to_string(),
             session_id,
@@ -142,6 +184,9 @@ pub fn store_summary(
             ram_avg,
             ram_peak,
             hog_count,
+            fps_avg,
+            fps_low_1pct,
+            tps_avg,
         ],
     )
     .map_err(|e| format!("Failed to store telemetry summary: {}", e))?;
@@ -155,7 +200,7 @@ pub fn get_summaries(
     let conn = db.conn();
     let mut stmt = conn
         .prepare(
-            "SELECT minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count \
+            "SELECT minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count, fps_avg, fps_low_1pct, tps_avg \
              FROM telemetry_summaries WHERE session_id = ?1 ORDER BY minute_ts",
         )
         .map_err(|e| format!("DB error: {}", e))?;
@@ -168,6 +213,9 @@ pub fn get_summaries(
                 ram_avg_mb: row.get(2)?,
                 ram_peak_mb: row.get(3)?,
                 hog_count: row.get(4)?,
+                fps_avg: row.get(5)?,
+                fps_low_1pct: row.get(6)?,
+                tps_avg: row.get(7)?,
             })
         })
         .map_err(|e| format!("Query error: {}", e))?

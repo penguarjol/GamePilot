@@ -156,6 +156,8 @@ fn test_recommendations_generation() {
         os_name: "Windows".to_string(),
         os_version: "11".to_string(),
         hostname: "test-pc".to_string(),
+        display_refresh_hz: 144,
+        windows_gaming: None,
     };
 
     let instance = gamepilot_app_lib::minecraft::instance::MinecraftInstance {

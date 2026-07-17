@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,7 @@ import type {
   ModFile,
   InstallResult,
   OptimizationProfile,
+  LaunchProfile,
 } from "@/types";
 
 export function Minecraft() {
@@ -77,6 +79,20 @@ export function Minecraft() {
   const [importedProfile, setImportedProfile] = useState<OptimizationProfile | null>(null);
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
   const [discordSending, setDiscordSending] = useState(false);
+
+  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+  const [previewData, setPreviewData] = useState<{
+    file: string;
+    before: string;
+    after: string;
+    key: string;
+    old_value: string;
+    new_value: string;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const [launchProfile, setLaunchProfile] = useState<LaunchProfile | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
 
   useEffect(() => {
     saved.execute();
@@ -144,6 +160,7 @@ export function Minecraft() {
     setConfigAnalysis(null);
     setModpackHealth(null);
     setLaunchResult(null);
+    setLaunchProfile(null);
     setLoading("Scanning instance...");
     try {
       const full = await invoke<MinecraftInstance>("scan_instance", {
@@ -151,6 +168,7 @@ export function Minecraft() {
         launcher: inst.launcher ?? "Custom",
       });
       setSelectedInstance(full);
+      loadLaunchProfile(full.id);
     } catch (err) {
       toast.error(String(err));
     } finally {
@@ -204,6 +222,13 @@ export function Minecraft() {
         instanceJson: JSON.stringify(instance),
       });
       setRecommendations(recs);
+
+      try {
+        const statuses = await invoke<Record<string, string>>("get_recommendation_statuses", {
+          instanceId: instance.id,
+        });
+        setRecStatusMap((prev) => ({ ...prev, ...statuses }));
+      } catch { /* non-fatal */ }
     } catch (err) {
       toast.error(String(err));
     } finally {
@@ -263,6 +288,33 @@ export function Minecraft() {
       setConfigAnalysis(config);
     } catch (err) {
       toast.error(`Failed: ${err}`);
+    }
+  };
+
+  const previewConfig = async (cr: ConfigRecommendation) => {
+    if (!selectedInstance) return;
+    setPreviewLoading(true);
+    setPreviewDialogOpen(true);
+    try {
+      const data = await invoke<{
+        file: string;
+        before: string;
+        after: string;
+        key: string;
+        old_value: string;
+        new_value: string;
+      }>("preview_config_change", {
+        instancePath: selectedInstance.path,
+        filename: cr.file,
+        key: cr.key,
+        newValue: cr.recommended_value,
+      });
+      setPreviewData(data);
+    } catch (err) {
+      toast.error(`Preview failed: ${err}`);
+      setPreviewDialogOpen(false);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -569,6 +621,68 @@ export function Minecraft() {
   const riskColor = (score: number) =>
     score >= 70 ? "text-success" : score >= 40 ? "text-warning" : "text-destructive";
 
+  const loadLaunchProfile = async (instanceId: string) => {
+    try {
+      const profile = await invoke<LaunchProfile | null>("get_launch_profile", { instanceId });
+      setLaunchProfile(profile);
+    } catch {
+      setLaunchProfile(null);
+    }
+  };
+
+  const saveLaunchProfile = async () => {
+    if (!selectedInstance) return;
+    setProfileSaving(true);
+    try {
+      await invoke<string>("save_launch_profile", {
+        instanceId: selectedInstance.id,
+        name: "Default",
+        javaPath: selectedInstance.java_path ?? null,
+        jvmArgs: selectedInstance.jvm_args ?? null,
+        xmxMb: selectedInstance.xmx_mb ?? null,
+        xmsMb: selectedInstance.xms_mb ?? null,
+        preLaunchActions: null,
+        autoApply: launchProfile?.auto_apply ?? false,
+      });
+      toast.success("Launch profile saved");
+      await loadLaunchProfile(selectedInstance.id);
+    } catch (err) {
+      toast.error(`Failed to save profile: ${err}`);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const toggleAutoApply = async (checked: boolean) => {
+    if (!selectedInstance) return;
+    try {
+      await invoke<string>("save_launch_profile", {
+        instanceId: selectedInstance.id,
+        name: launchProfile?.name ?? "Default",
+        javaPath: launchProfile?.java_path ?? selectedInstance.java_path ?? null,
+        jvmArgs: launchProfile?.jvm_args ?? selectedInstance.jvm_args ?? null,
+        xmxMb: launchProfile?.xmx_mb ?? selectedInstance.xmx_mb ?? null,
+        xmsMb: launchProfile?.xms_mb ?? selectedInstance.xms_mb ?? null,
+        preLaunchActions: launchProfile?.pre_launch_actions ?? null,
+        autoApply: checked,
+      });
+      await loadLaunchProfile(selectedInstance.id);
+    } catch (err) {
+      toast.error(`Failed to update auto-apply: ${err}`);
+    }
+  };
+
+  const deleteLaunchProfile = async () => {
+    if (!launchProfile) return;
+    try {
+      await invoke("delete_launch_profile", { profileId: launchProfile.id });
+      setLaunchProfile(null);
+      toast.success("Launch profile deleted");
+    } catch (err) {
+      toast.error(`Failed to delete profile: ${err}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -735,6 +849,57 @@ export function Minecraft() {
                 </CardContent>
               </Card>
 
+              {/* Launch Profile */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Launch Profile</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {launchProfile ? (
+                    <>
+                      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
+                        <dt className="text-muted-foreground">Java</dt>
+                        <dd className="font-mono text-xs truncate">{launchProfile.java_path ?? "Default"}</dd>
+                        <dt className="text-muted-foreground">Max RAM</dt>
+                        <dd>{launchProfile.xmx_mb ? `${launchProfile.xmx_mb} MB` : "Not set"}</dd>
+                        <dt className="text-muted-foreground">Min RAM</dt>
+                        <dd>{launchProfile.xms_mb ? `${launchProfile.xms_mb} MB` : "Not set"}</dd>
+                        {launchProfile.jvm_args && (
+                          <>
+                            <dt className="text-muted-foreground">JVM Args</dt>
+                            <dd className="font-mono text-xs truncate">{launchProfile.jvm_args}</dd>
+                          </>
+                        )}
+                      </dl>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={launchProfile.auto_apply}
+                            onCheckedChange={toggleAutoApply}
+                          />
+                          <span className="text-sm">Auto-apply on launch</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="secondary" onClick={saveLaunchProfile} disabled={profileSaving}>
+                            {profileSaving ? "Saving..." : "Update Profile"}
+                          </Button>
+                          <Button size="sm" variant="destructive" onClick={deleteLaunchProfile}>
+                            Delete Profile
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">No launch profile saved for this instance.</p>
+                      <Button size="sm" onClick={saveLaunchProfile} disabled={profileSaving}>
+                        {profileSaving ? "Saving..." : "Save as Profile"}
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* Health Score */}
               {modpackHealth && (
                 <Card>
@@ -858,6 +1023,45 @@ export function Minecraft() {
                         ...and {modAnalysis.mods.length - 50} more
                       </p>
                     )}
+                    <div className="mt-4">
+                      <h4 className="text-sm font-semibold mb-2">Dependency Summary</h4>
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <p>{modAnalysis.total_mods} mods installed ({modAnalysis.total_size_mb.toFixed(0)} MB)</p>
+                        <p>{modAnalysis.detected_performance_mods.length} performance mods detected</p>
+                        <p>{modAnalysis.missing_performance_mods.length} recommended mods not installed</p>
+                        {modAnalysis.conflicts?.length > 0 && (
+                          <p className="text-destructive">{modAnalysis.conflicts.length} conflicts detected</p>
+                        )}
+                        {modAnalysis.duplicates?.length > 0 && (
+                          <p className="text-warning">{modAnalysis.duplicates.length} duplicate groups found</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {modAnalysis.conflicts && modAnalysis.conflicts.length > 0 && (
+                      <div className="mt-4">
+                        <h4 className="text-sm font-semibold text-destructive mb-2">Mod Conflicts Detected</h4>
+                        {modAnalysis.conflicts.map((c, i) => (
+                          <Card key={i} className="border-destructive/50 mb-2 p-3">
+                            <div className="text-sm font-medium">{c.mod_a} vs {c.mod_b}</div>
+                            <div className="text-xs text-muted-foreground">{c.reason}</div>
+                            <Badge variant="destructive" className="mt-1">{c.severity}</Badge>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+
+                    {modAnalysis.duplicates && modAnalysis.duplicates.length > 0 && (
+                      <div className="mt-4">
+                        <h4 className="text-sm font-semibold text-warning mb-2">Duplicate Functionality</h4>
+                        {modAnalysis.duplicates.map((d, i) => (
+                          <Card key={i} className="border-warning/50 mb-2 p-3">
+                            <div className="text-sm font-medium">{d.category}: {d.installed_mods.join(", ")}</div>
+                            <div className="text-xs text-muted-foreground">{d.recommendation}</div>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -975,14 +1179,17 @@ export function Minecraft() {
                         </div>
                         <div className="text-sm">
                           <span className="text-muted-foreground">{cr.key}: </span>
-                          <span className="line-through text-muted-foreground">{cr.current_value}</span>
+                          <span className="line-through text-destructive/70">{cr.current_value}</span>
                           <span className="mx-1.5 text-muted-foreground">{"\u2192"}</span>
-                          <span className="text-primary font-medium">{cr.recommended_value}</span>
+                          <span className="text-success font-medium">{cr.recommended_value}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">{cr.reason}</p>
-                        <div className="pt-1">
+                        <div className="pt-1 flex gap-2">
                           <Button size="sm" onClick={() => applyConfig(cr)}>
                             Apply
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => previewConfig(cr)}>
+                            Preview
                           </Button>
                         </div>
                       </div>
@@ -1039,6 +1246,19 @@ export function Minecraft() {
                   </CardContent>
                 </Card>
               )}
+
+              {/* World and Server Analysis (future scope) */}
+              <Card className="border-dashed border-muted mt-4">
+                <CardHeader>
+                  <CardTitle className="text-sm text-muted-foreground">World and Server Analysis</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-muted-foreground">
+                    World analysis, server TPS monitoring, chunk loader detection, and
+                    entity counting are planned for a future release.
+                  </p>
+                </CardContent>
+              </Card>
 
               {/* Applied Changes (Rollback) */}
               {appliedChanges.length > 0 && (
@@ -1198,6 +1418,65 @@ export function Minecraft() {
                       )}
                     </TabsContent>
                   </Tabs>
+                </DialogContent>
+              </Dialog>
+
+              {/* Config Diff Preview Dialog */}
+              <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+                <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Preview Config Change</DialogTitle>
+                    <DialogDescription>
+                      {previewData ? `${previewData.file} — changing "${previewData.key}"` : "Loading..."}
+                    </DialogDescription>
+                  </DialogHeader>
+                  {previewLoading ? (
+                    <p className="text-sm text-muted-foreground py-4">Loading preview...</p>
+                  ) : previewData ? (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-destructive">Before</span>
+                          <pre className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs font-mono overflow-auto max-h-60 whitespace-pre-wrap">
+                            {previewData.before.split("\n").map((line, i) => {
+                              const trimmed = line.trim();
+                              const isChanged = (() => {
+                                const pair = trimmed.split(/[=:]/, 2);
+                                return pair.length >= 1 && pair[0].trim() === previewData.key;
+                              })();
+                              return (
+                                <div key={i} className={isChanged ? "bg-destructive/20 -mx-3 px-3" : ""}>
+                                  {line}
+                                </div>
+                              );
+                            })}
+                          </pre>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-xs font-medium text-success">After</span>
+                          <pre className="rounded-lg border border-success/30 bg-success/5 p-3 text-xs font-mono overflow-auto max-h-60 whitespace-pre-wrap">
+                            {previewData.after.split("\n").map((line, i) => {
+                              const trimmed = line.trim();
+                              const isChanged = (() => {
+                                const pair = trimmed.split(/[=:]/, 2);
+                                return pair.length >= 1 && pair[0].trim() === previewData.key;
+                              })();
+                              return (
+                                <div key={i} className={isChanged ? "bg-success/20 -mx-3 px-3" : ""}>
+                                  {line}
+                                </div>
+                              );
+                            })}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  <DialogFooter>
+                    <Button variant="secondary" onClick={() => setPreviewDialogOpen(false)}>
+                      Close
+                    </Button>
+                  </DialogFooter>
                 </DialogContent>
               </Dialog>
 

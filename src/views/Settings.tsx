@@ -36,6 +36,10 @@ export function Settings() {
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState("");
   const [discordSaving, setDiscordSaving] = useState(false);
   const [discordTesting, setDiscordTesting] = useState(false);
+  const [privacyProcessScanning, setPrivacyProcessScanning] = useState(true);
+  const [privacySessionTracking, setPrivacySessionTracking] = useState(true);
+  const [privacyModAnalysis, setPrivacyModAnalysis] = useState(true);
+  const [privacyScreenCapture, setPrivacyScreenCapture] = useState(false);
   const ignoreRules = useInvoke<IgnoreRule[]>("get_ignore_rules");
   const history = useInvoke<OptimizationAction[]>("get_optimization_history");
 
@@ -44,6 +48,7 @@ export function Settings() {
     history.execute();
     initTheme();
     initDiscordWebhook();
+    initPrivacyPrefs();
     getVersion().then(setAppVersion).catch(() => setAppVersion("unknown"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -69,6 +74,29 @@ export function Settings() {
       const saved = await invoke<string | null>("get_preference", { key: "discord_webhook_url" });
       if (saved) setDiscordWebhookUrl(saved);
     } catch { /* preference may not exist yet */ }
+  };
+
+  const initPrivacyPrefs = async () => {
+    try {
+      const ps = await invoke<string | null>("get_preference", { key: "privacy_process_scanning" });
+      if (ps !== null) setPrivacyProcessScanning(ps !== "false");
+      const st = await invoke<string | null>("get_preference", { key: "privacy_session_tracking" });
+      if (st !== null) setPrivacySessionTracking(st !== "false");
+      const ma = await invoke<string | null>("get_preference", { key: "privacy_mod_analysis" });
+      if (ma !== null) setPrivacyModAnalysis(ma !== "false");
+      const sc = await invoke<string | null>("get_preference", { key: "privacy_screen_capture" });
+      if (sc !== null) setPrivacyScreenCapture(sc === "true");
+    } catch { /* preferences may not be initialized yet */ }
+  };
+
+  const setPrivacyPref = async (key: string, value: boolean, setter: (v: boolean) => void) => {
+    setter(value);
+    try {
+      await invoke("set_preference", { key, value: String(value) });
+    } catch (err) {
+      toast.error(`Failed to save preference: ${err}`);
+      setter(!value);
+    }
   };
 
   const saveDiscordWebhook = async () => {
@@ -206,6 +234,55 @@ export function Settings() {
                 {discordTesting ? "Testing..." : "Test"}
               </Button>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Privacy */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Privacy</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Process Scanning</p>
+              <p className="text-xs text-muted-foreground">Scan running processes to detect games and resource hogs</p>
+            </div>
+            <Switch
+              checked={privacyProcessScanning}
+              onCheckedChange={(v) => setPrivacyPref("privacy_process_scanning", v, setPrivacyProcessScanning)}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Session Tracking</p>
+              <p className="text-xs text-muted-foreground">Record play sessions with telemetry data for performance insights</p>
+            </div>
+            <Switch
+              checked={privacySessionTracking}
+              onCheckedChange={(v) => setPrivacyPref("privacy_session_tracking", v, setPrivacySessionTracking)}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Mod Analysis</p>
+              <p className="text-xs text-muted-foreground">Analyze installed mods to generate performance recommendations</p>
+            </div>
+            <Switch
+              checked={privacyModAnalysis}
+              onCheckedChange={(v) => setPrivacyPref("privacy_mod_analysis", v, setPrivacyModAnalysis)}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Screen Capture</p>
+              <p className="text-xs text-muted-foreground">Enable vision-based analysis via periodic screen captures</p>
+            </div>
+            <Switch
+              checked={privacyScreenCapture}
+              onCheckedChange={(v) => setPrivacyPref("privacy_screen_capture", v, setPrivacyScreenCapture)}
+            />
           </div>
         </CardContent>
       </Card>

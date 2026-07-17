@@ -1,4 +1,6 @@
 use crate::db::Database;
+use crate::hardware;
+use crate::telemetry;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -21,6 +23,10 @@ pub struct SessionReport {
     pub session: Session,
     pub recommendations_applied: usize,
     pub process_observations: usize,
+    pub avg_fps: Option<f32>,
+    pub low_1pct_fps: Option<f32>,
+    pub avg_tps: Option<f32>,
+    pub telemetry_points: usize,
     pub summary: String,
 }
 
@@ -44,6 +50,8 @@ pub fn create_session(db: &Database, instance_id: &str, launch_method: &str) -> 
         "INSERT INTO sessions (id, instance_id, started_at, launch_method, status) VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![session.id, session.instance_id, session.started_at, session.launch_method, session.status],
     ).map_err(|e| format!("Failed to create session: {}", e))?;
+
+    store_hardware_snapshot(&conn, &session.id);
 
     Ok(session)
 }
@@ -173,6 +181,34 @@ pub fn generate_report(db: &Database, session_id: &str) -> Result<SessionReport,
         )
         .unwrap_or(0);
 
+    drop(conn);
+    let summaries = telemetry::get_summaries(db, session_id).unwrap_or_default();
+    let telemetry_points = summaries.len();
+
+    let fps_values: Vec<f32> = summaries.iter().filter_map(|s| s.fps_avg).collect();
+    let avg_fps = if fps_values.is_empty() {
+        None
+    } else {
+        Some(fps_values.iter().sum::<f32>() / fps_values.len() as f32)
+    };
+
+    let low_1pct_values: Vec<f32> = summaries.iter().filter_map(|s| s.fps_low_1pct).collect();
+    let low_1pct_fps = if low_1pct_values.is_empty() {
+        None
+    } else {
+        let mut sorted = low_1pct_values.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let idx = (sorted.len() as f32 * 0.01).ceil().max(1.0) as usize;
+        Some(sorted[..idx.min(sorted.len())].iter().sum::<f32>() / idx.min(sorted.len()) as f32)
+    };
+
+    let tps_values: Vec<f32> = summaries.iter().filter_map(|s| s.tps_avg).collect();
+    let avg_tps = if tps_values.is_empty() {
+        None
+    } else {
+        Some(tps_values.iter().sum::<f32>() / tps_values.len() as f32)
+    };
+
     let duration_part = session
         .duration_secs
         .map(|d| format!(" Duration: {}m {}s.", d / 60, d % 60))
@@ -183,19 +219,54 @@ pub fn generate_report(db: &Database, session_id: &str) -> Result<SessionReport,
         _ => String::new(),
     };
 
+    let fps_part = avg_fps
+        .map(|f| format!(" Avg FPS: {:.0}.", f))
+        .unwrap_or_default();
+
     let summary = format!(
-        "Session for instance {}.{}{} {} recommendations, {} process observations.",
+        "Session for instance {}.{}{}{} {} recommendations, {} process observations, {} telemetry points.",
         session.instance_id,
         duration_part,
         perf_part,
+        fps_part,
         rec_count,
-        obs_count
+        obs_count,
+        telemetry_points,
     );
 
     Ok(SessionReport {
         session,
         recommendations_applied: rec_count as usize,
         process_observations: obs_count as usize,
+        avg_fps,
+        low_1pct_fps,
+        avg_tps,
+        telemetry_points,
         summary,
     })
+}
+
+fn store_hardware_snapshot(conn: &rusqlite::Connection, session_id: &str) {
+    let hw = hardware::collect_hardware_info();
+    let device_id = {
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(hw.hostname.as_bytes());
+        hasher.update(hw.cpu_model.as_bytes());
+        format!("dev-{}", hex::encode(&hasher.finalize()[..8]))
+    };
+    conn.execute(
+        "INSERT INTO hardware_snapshots (id, session_id, device_id, cpu_usage, ram_total_mb, ram_used_mb, ram_available_mb, gpu_model) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            session_id,
+            device_id,
+            hw.cpu_usage_percent as f64,
+            hw.ram_total_mb as i64,
+            hw.ram_used_mb as i64,
+            hw.ram_available_mb as i64,
+            hw.gpu_model,
+        ],
+    ).ok();
 }

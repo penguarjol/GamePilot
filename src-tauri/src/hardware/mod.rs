@@ -18,6 +18,15 @@ pub struct HardwareInfo {
     pub os_name: String,
     pub os_version: String,
     pub hostname: String,
+    pub display_refresh_hz: u32,
+    pub windows_gaming: Option<WindowsGamingSettings>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WindowsGamingSettings {
+    pub game_mode_enabled: Option<bool>,
+    pub hardware_accelerated_gpu_scheduling: Option<bool>,
+    pub variable_refresh_rate: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -27,6 +36,7 @@ pub struct DiskInfo {
     pub total_gb: f64,
     pub free_gb: f64,
     pub is_removable: bool,
+    pub storage_type: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,19 +115,32 @@ pub fn collect_hardware_info() -> HardwareInfo {
     let ram_used_mb = sys.used_memory() / (1024 * 1024);
     let ram_available_mb = sys.available_memory() / (1024 * 1024);
 
+    let storage_types = detect_storage_types();
     let disks_info = Disks::new_with_refreshed_list();
     let disks: Vec<DiskInfo> = disks_info
         .iter()
-        .map(|d| DiskInfo {
-            name: d.name().to_string_lossy().to_string(),
-            mount_point: d.mount_point().to_string_lossy().to_string(),
-            total_gb: d.total_space() as f64 / (1024.0 * 1024.0 * 1024.0),
-            free_gb: d.available_space() as f64 / (1024.0 * 1024.0 * 1024.0),
-            is_removable: d.is_removable(),
+        .map(|d| {
+            let mount = d.mount_point().to_string_lossy().to_string();
+            let st = storage_types
+                .iter()
+                .find(|(m, _)| mount.starts_with(m))
+                .map(|(_, t)| t.clone())
+                .unwrap_or_else(|| "Unknown".to_string());
+            DiskInfo {
+                name: d.name().to_string_lossy().to_string(),
+                mount_point: mount,
+                total_gb: d.total_space() as f64 / (1024.0 * 1024.0 * 1024.0),
+                free_gb: d.available_space() as f64 / (1024.0 * 1024.0 * 1024.0),
+                is_removable: d.is_removable(),
+                storage_type: st,
+            }
         })
         .collect();
 
     let (gpu_model, gpu_vram, gpu_driver) = detect_gpu_details();
+
+    let display_refresh_hz = detect_display_refresh_rate();
+    let windows_gaming = detect_windows_gaming_settings();
 
     HardwareInfo {
         cpu_model,
@@ -135,6 +158,8 @@ pub fn collect_hardware_info() -> HardwareInfo {
         os_name: System::name().unwrap_or_else(|| "Unknown".to_string()),
         os_version: System::os_version().unwrap_or_else(|| "Unknown".to_string()),
         hostname: System::host_name().unwrap_or_else(|| "Unknown".to_string()),
+        display_refresh_hz,
+        windows_gaming,
     }
 }
 
@@ -269,6 +294,166 @@ fn categorize_process(name: &str, ram_mb: f64, cpu: f32) -> (String, bool, Strin
     }
 
     ("System/Other".to_string(), false, String::new())
+}
+
+fn detect_display_refresh_rate() -> u32 {
+    #[cfg(target_os = "windows")]
+    {
+        detect_display_refresh_rate_windows()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_display_refresh_rate_windows() -> u32 {
+    use std::os::windows::process::CommandExt;
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-Command",
+            "(Get-CimInstance Win32_VideoController | Select-Object -First 1).CurrentRefreshRate",
+        ])
+        .creation_flags(0x08000000)
+        .output()
+        .ok();
+    output
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn detect_storage_types() -> Vec<(String, String)> {
+    #[cfg(target_os = "windows")]
+    {
+        detect_storage_types_windows()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_storage_types_windows() -> Vec<(String, String)> {
+    use std::os::windows::process::CommandExt;
+    let output = std::process::Command::new("powershell")
+        .args([
+            "-Command",
+            "Get-PhysicalDisk | Select-Object DeviceId, MediaType | ConvertTo-Csv -NoTypeInformation",
+        ])
+        .creation_flags(0x08000000)
+        .output()
+        .ok();
+
+    match output {
+        Some(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let mut results = Vec::new();
+            for line in text.lines().skip(1) {
+                let parts: Vec<&str> = line.split(',').collect();
+                if parts.len() >= 2 {
+                    let media_type = parts[1].trim().trim_matches('"');
+                    let storage = match media_type {
+                        "SSD" => "SSD",
+                        "HDD" => "HDD",
+                        _ => "Unknown",
+                    };
+                    results.push((String::new(), storage.to_string()));
+                }
+            }
+            if results.len() == 1 {
+                return vec![("".to_string(), results[0].1.clone())];
+            }
+            results
+        }
+        None => Vec::new(),
+    }
+}
+
+fn detect_windows_gaming_settings() -> Option<WindowsGamingSettings> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(detect_windows_gaming_settings_impl())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_gaming_settings_impl() -> WindowsGamingSettings {
+    use std::os::windows::process::CommandExt;
+
+    let game_mode_enabled = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\GameBar",
+            "/v",
+            "AutoGameModeEnabled",
+        ])
+        .creation_flags(0x08000000)
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).to_string();
+            if text.contains("0x1") {
+                Some(true)
+            } else if text.contains("0x0") {
+                Some(false)
+            } else {
+                None
+            }
+        });
+
+    let hardware_accelerated_gpu_scheduling = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers",
+            "/v",
+            "HwSchMode",
+        ])
+        .creation_flags(0x08000000)
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).to_string();
+            if text.contains("0x2") {
+                Some(true)
+            } else if text.contains("0x1") || text.contains("0x0") {
+                Some(false)
+            } else {
+                None
+            }
+        });
+
+    let variable_refresh_rate = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKCU\Software\Microsoft\DirectX\UserGpuPreferences",
+            "/v",
+            "DirectXUserGlobalSettings",
+        ])
+        .creation_flags(0x08000000)
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8_lossy(&o.stdout).to_string();
+            if text.contains("VRROptimizeEnable=1") {
+                Some(true)
+            } else if text.contains("VRROptimizeEnable=0") {
+                Some(false)
+            } else {
+                None
+            }
+        });
+
+    WindowsGamingSettings {
+        game_mode_enabled,
+        hardware_accelerated_gpu_scheduling,
+        variable_refresh_rate,
+    }
 }
 
 fn detect_gpu_details() -> (String, u64, String) {

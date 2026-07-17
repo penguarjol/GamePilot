@@ -14,6 +14,14 @@ export interface HardwareInfo {
   os_name: string;
   os_version: string;
   hostname: string;
+  display_refresh_hz: number;
+  windows_gaming: WindowsGamingSettings | null;
+}
+
+export interface WindowsGamingSettings {
+  game_mode_enabled: boolean | null;
+  hardware_accelerated_gpu_scheduling: boolean | null;
+  variable_refresh_rate: boolean | null;
 }
 
 export interface DiskInfo {
@@ -22,6 +30,7 @@ export interface DiskInfo {
   total_gb: number;
   free_gb: number;
   is_removable: boolean;
+  storage_type: string;
 }
 
 export interface ProcessInfo {
@@ -92,7 +101,36 @@ export interface ModAnalysis {
   mods: ModInfo[];
   detected_performance_mods: string[];
   missing_performance_mods: PerformanceModRecommendation[];
+  conflicts: ConflictWarning[];
+  duplicates: DuplicateWarning[];
   total_size_mb: number;
+}
+
+export interface ConflictWarning {
+  mod_a: string;
+  mod_b: string;
+  reason: string;
+  severity: string;
+}
+
+export interface DuplicateWarning {
+  category: string;
+  installed_mods: string[];
+  recommendation: string;
+}
+
+export interface LaunchProfile {
+  id: string;
+  instance_id: string;
+  name: string;
+  java_path: string | null;
+  jvm_args: string | null;
+  xmx_mb: number | null;
+  xms_mb: number | null;
+  pre_launch_actions: string | null;
+  auto_apply: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PerformanceModRecommendation {
@@ -205,6 +243,10 @@ export interface SessionReport {
   session: Session;
   recommendations_applied: number;
   process_observations: number;
+  avg_fps: number | null;
+  low_1pct_fps: number | null;
+  avg_tps: number | null;
+  telemetry_points: number;
   summary: string;
 }
 
@@ -314,6 +356,15 @@ export interface DetectedGame {
   is_running: boolean;
 }
 
+export interface RecommendationOutcome {
+  recommendation_id: string;
+  metric_name: string;
+  improvement_percent: number | null;
+  outcome: string;
+  title: string;
+  category: string;
+}
+
 export interface LogEvent {
   timestamp: string;
   level: string;
@@ -326,6 +377,9 @@ export interface TelemetrySummary {
   ram_avg_mb: number | null;
   ram_peak_mb: number | null;
   hog_count: number | null;
+  fps_avg: number | null;
+  fps_low_1pct: number | null;
+  tps_avg: number | null;
 }
 
 export interface OptimizationProfile {

@@ -138,6 +138,18 @@ export function Dashboard() {
                     <span className="text-muted-foreground">GPU</span>
                     <span className="text-right truncate max-w-[60%]">{hw.data.gpu_model}</span>
                   </div>
+                  {hw.data.gpu_vram_mb > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">VRAM</span>
+                      <span>{hw.data.gpu_vram_mb} MB</span>
+                    </div>
+                  )}
+                  {hw.data.display_refresh_hz > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Display</span>
+                      <span>{hw.data.display_refresh_hz} Hz</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">OS</span>
                     <span>{hw.data.os_name}</span>

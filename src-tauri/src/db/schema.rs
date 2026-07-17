@@ -117,6 +117,9 @@ CREATE TABLE IF NOT EXISTS telemetry_summaries (
     ram_avg_mb REAL,
     ram_peak_mb REAL,
     hog_count INTEGER DEFAULT 0,
+    fps_avg REAL,
+    fps_low_1pct REAL,
+    tps_avg REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
@@ -135,5 +138,47 @@ CREATE TABLE IF NOT EXISTS optimization_actions (
     rolled_back_at TEXT,
     FOREIGN KEY (recommendation_id) REFERENCES recommendations(id),
     FOREIGN KEY (instance_id) REFERENCES game_instances(id)
+);
+
+CREATE TABLE IF NOT EXISTS launch_profiles (
+    id TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT 'Default',
+    java_path TEXT,
+    jvm_args TEXT,
+    xmx_mb INTEGER,
+    xms_mb INTEGER,
+    pre_launch_actions TEXT,
+    auto_apply INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (instance_id) REFERENCES game_instances(id)
+);
+
+CREATE TABLE IF NOT EXISTS hardware_snapshots (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    device_id TEXT,
+    cpu_usage REAL,
+    ram_total_mb INTEGER,
+    ram_used_mb INTEGER,
+    ram_available_mb INTEGER,
+    gpu_model TEXT,
+    snapshot_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+    id TEXT PRIMARY KEY,
+    recommendation_id TEXT NOT NULL,
+    session_before_id TEXT,
+    session_after_id TEXT,
+    metric_name TEXT NOT NULL,
+    value_before REAL,
+    value_after REAL,
+    improvement_percent REAL,
+    outcome TEXT NOT NULL DEFAULT 'unknown',
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (recommendation_id) REFERENCES recommendations(id)
 );
 "#;

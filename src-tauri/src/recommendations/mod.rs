@@ -145,5 +145,24 @@ pub fn apply_config_change(
     std::fs::write(file_path, &modified)
         .map_err(|e| format!("Failed to write config: {}", e))?;
 
+    let written = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Validation read failed: {}", e))?;
+
+    let validated = written.lines().any(|line| {
+        if let Some((k, v)) = line.trim().split_once('=').or_else(|| line.trim().split_once(':')) {
+            k.trim() == key && v.trim() == new_value
+        } else {
+            false
+        }
+    });
+
+    if !validated {
+        rollback_file(&rp)?;
+        return Err(format!(
+            "Validation failed: {} was not set to {} after write. Change was rolled back.",
+            key, new_value
+        ));
+    }
+
     Ok(rp)
 }

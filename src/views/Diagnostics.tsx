@@ -21,6 +21,7 @@ export function Diagnostics() {
   const procs = useInvoke<ProcessInfo[]>("get_process_info");
   const java = useInvoke<JavaInstallation[]>("detect_java");
   const [hasScanned, setHasScanned] = useState(false);
+  const [ignoredOnce, setIgnoredOnce] = useState<Set<string>>(new Set());
 
   const runScan = async () => {
     setHasScanned(true);
@@ -123,6 +124,12 @@ export function Diagnostics() {
                     <dd>{(hw.data.cpu_freq_mhz / 1000).toFixed(2)} GHz</dd>
                   </>
                 )}
+                {hw.data.display_refresh_hz > 0 && (
+                  <>
+                    <dt className="text-muted-foreground">Display Refresh</dt>
+                    <dd>{hw.data.display_refresh_hz} Hz</dd>
+                  </>
+                )}
               </dl>
             ) : hw.error ? (
               <p className="text-sm text-destructive">{hw.error}</p>
@@ -182,6 +189,7 @@ export function Diagnostics() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Mount</TableHead>
+                  <TableHead>Type</TableHead>
                   <TableHead>Total (GB)</TableHead>
                   <TableHead>Free (GB)</TableHead>
                   <TableHead>Used</TableHead>
@@ -194,6 +202,11 @@ export function Diagnostics() {
                     <TableRow key={i}>
                       <TableCell>{d.name || "-"}</TableCell>
                       <TableCell className="font-mono text-xs">{d.mount_point}</TableCell>
+                      <TableCell>
+                        <Badge variant={d.storage_type === "SSD" ? "default" : d.storage_type === "HDD" ? "secondary" : "outline"}>
+                          {d.storage_type}
+                        </Badge>
+                      </TableCell>
                       <TableCell>{d.total_gb.toFixed(1)}</TableCell>
                       <TableCell className={d.free_gb < 10 ? "text-warning" : ""}>
                         {d.free_gb.toFixed(1)}
@@ -213,12 +226,47 @@ export function Diagnostics() {
         </Card>
       )}
 
+      {/* Windows Gaming Settings */}
+      {hw.data?.windows_gaming && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Windows Gaming Settings</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">Game Mode</dt>
+              <dd>
+                <Badge variant={hw.data.windows_gaming.game_mode_enabled === true ? "default" : "secondary"}>
+                  {hw.data.windows_gaming.game_mode_enabled === true ? "Enabled" : hw.data.windows_gaming.game_mode_enabled === false ? "Disabled" : "Unknown"}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">Hardware-Accelerated GPU Scheduling</dt>
+              <dd>
+                <Badge variant={hw.data.windows_gaming.hardware_accelerated_gpu_scheduling === true ? "default" : "secondary"}>
+                  {hw.data.windows_gaming.hardware_accelerated_gpu_scheduling === true ? "Enabled" : hw.data.windows_gaming.hardware_accelerated_gpu_scheduling === false ? "Disabled" : "Unknown"}
+                </Badge>
+              </dd>
+              <dt className="text-muted-foreground">Variable Refresh Rate</dt>
+              <dd>
+                <Badge variant={hw.data.windows_gaming.variable_refresh_rate === true ? "default" : "secondary"}>
+                  {hw.data.windows_gaming.variable_refresh_rate === true ? "Enabled" : hw.data.windows_gaming.variable_refresh_rate === false ? "Disabled" : "Unknown"}
+                </Badge>
+              </dd>
+            </dl>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Processes */}
       <Card>
         <CardHeader>
           <CardTitle>
             Processes
-            {procs.data && <span className="text-muted-foreground font-normal ml-2">({procs.data.length})</span>}
+            {procs.data && (
+              <span className="text-muted-foreground font-normal ml-2">
+                ({procs.data.filter(p => !ignoredOnce.has(p.name)).length})
+              </span>
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -228,50 +276,62 @@ export function Diagnostics() {
                 <div key={i} className="h-4 animate-pulse rounded bg-muted" />
               ))}
             </div>
-          ) : procs.data ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>PID</TableHead>
-                  <TableHead>CPU %</TableHead>
-                  <TableHead>RAM (MB)</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {procs.data.map((p) => (
-                  <TableRow key={p.pid}>
-                    <TableCell className="font-mono text-xs">{p.name}</TableCell>
-                    <TableCell>{p.pid}</TableCell>
-                    <TableCell className={p.cpu_percent > 15 ? "text-warning" : ""}>
-                      {p.cpu_percent.toFixed(1)}
-                    </TableCell>
-                    <TableCell className={p.ram_mb > 1000 ? "text-warning" : ""}>
-                      {p.ram_mb.toFixed(0)}
-                    </TableCell>
-                    <TableCell>{p.category}</TableCell>
-                    <TableCell>
-                      <Badge variant={p.is_resource_hog ? "destructive" : "secondary"}>
-                        {p.is_resource_hog ? "hog" : "ok"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => ignoreProcess(p.name)}
-                      >
-                        Always Ignore
-                      </Button>
-                    </TableCell>
+          ) : procs.data ? (() => {
+            const filteredProcs = procs.data.filter(p => !ignoredOnce.has(p.name));
+            return (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>PID</TableHead>
+                    <TableHead>CPU %</TableHead>
+                    <TableHead>RAM (MB)</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : procs.error ? (
+                </TableHeader>
+                <TableBody>
+                  {filteredProcs.map((p) => (
+                    <TableRow key={p.pid}>
+                      <TableCell className="font-mono text-xs">{p.name}</TableCell>
+                      <TableCell>{p.pid}</TableCell>
+                      <TableCell className={p.cpu_percent > 15 ? "text-warning" : ""}>
+                        {p.cpu_percent.toFixed(1)}
+                      </TableCell>
+                      <TableCell className={p.ram_mb > 1000 ? "text-warning" : ""}>
+                        {p.ram_mb.toFixed(0)}
+                      </TableCell>
+                      <TableCell>{p.category}</TableCell>
+                      <TableCell>
+                        <Badge variant={p.is_resource_hog ? "destructive" : "secondary"}>
+                          {p.is_resource_hog ? "hog" : "ok"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="space-x-1">
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => {
+                            setIgnoredOnce(prev => new Set(prev).add(p.name));
+                          }}
+                        >
+                          Ignore Once
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          onClick={() => ignoreProcess(p.name)}
+                        >
+                          Always Ignore
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            );
+          })() : procs.error ? (
             <p className="text-sm text-destructive">{procs.error}</p>
           ) : null}
         </CardContent>

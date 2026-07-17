@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Session, SessionReport, TelemetrySample, Recommendation, GovernorStatus, LogEvent } from "@/types";
+import type { Session, SessionReport, TelemetrySample, Recommendation, GovernorStatus, LogEvent, SavedInstance, ProcessInfo } from "@/types";
 
 export function Sessions() {
   const sessions = useInvoke<Session[]>("get_sessions");
@@ -25,11 +25,13 @@ export function Sessions() {
   const [governorStatus, setGovernorStatus] = useState<GovernorStatus | null>(null);
   const [logEvents, setLogEvents] = useState<LogEvent[]>([]);
   const [logOpen, setLogOpen] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const samplesRef = useRef<{ cpu: number[]; ram: number[] }>({ cpu: [], ram: [] });
+  const samplesRef = useRef<{ cpu: number[]; ram: number[]; fps: number[]; tps: number[] }>({ cpu: [], ram: [], fps: [], tps: [] });
   const logPosRef = useRef(0);
   const lastSummaryRef = useRef(0);
   const sessionsDataRef = useRef(sessions.data);
+  const prevActiveRef = useRef<string | null>(null);
   useEffect(() => { sessionsDataRef.current = sessions.data; }, [sessions.data]);
 
   useEffect(() => {
@@ -37,7 +39,12 @@ export function Sessions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const hasActiveSession = sessions.data?.some((s) => s.status === "active") ?? false;
+  const activeSession = sessions.data?.find((s) => s.status === "active") ?? null;
+  const hasActiveSession = activeSession !== null;
+
+  useEffect(() => {
+    prevActiveRef.current = activeSession?.id ?? null;
+  }, [activeSession]);
 
   useEffect(() => {
     if (!hasActiveSession) {
@@ -50,7 +57,7 @@ export function Sessions() {
       return;
     }
 
-    samplesRef.current = { cpu: [], ram: [] };
+    samplesRef.current = { cpu: [], ram: [], fps: [], tps: [] };
     logPosRef.current = 0;
     lastSummaryRef.current = Date.now();
     let cancelled = false;
@@ -91,35 +98,71 @@ export function Sessions() {
 
       const active = sessionsDataRef.current?.find((s) => s.status === "active");
 
+      // Record process observations and compute hog count
+      let hogCount = 0;
+      if (active) {
+        try {
+          const procs = await invoke<ProcessInfo[]>("get_process_info");
+          const hogs = procs.filter(p => p.is_resource_hog);
+          hogCount = hogs.length;
+          if (hogs.length > 0) {
+            await invoke("record_process_observation", {
+              sessionId: active.id,
+              processesJson: JSON.stringify(hogs),
+            });
+          }
+        } catch { /* non-fatal */ }
+      }
+
       // Store telemetry summary every 60s
       if (active && Date.now() - lastSummaryRef.current >= 60_000) {
-        const { cpu, ram } = samplesRef.current;
+        const { cpu, ram, fps, tps } = samplesRef.current;
         if (cpu.length > 0) {
           const cpuAvg = cpu.reduce((a, b) => a + b, 0) / cpu.length;
           const ramAvg = ram.reduce((a, b) => a + b, 0) / ram.length;
           const ramPeak = Math.max(...ram);
+          const fpsAvg = fps.length > 0 ? fps.reduce((a, b) => a + b, 0) / fps.length : null;
+          const sorted = [...fps].sort((a, b) => a - b);
+          const fpsLow1pct = sorted.length > 0 ? sorted[Math.floor(sorted.length * 0.01)] ?? sorted[0] : null;
+          const tpsAvgVal = tps.length > 0 ? tps.reduce((a, b) => a + b, 0) / tps.length : null;
           await invoke("store_telemetry_summary", {
             sessionId: active.id,
             cpuAvg,
             ramAvg,
             ramPeak,
-            hogCount: 0,
+            hogCount,
+            fpsAvg,
+            fpsLow1pct,
+            tpsAvg: tpsAvgVal,
           }).catch(() => {});
-          samplesRef.current = { cpu: [], ram: [] };
+          samplesRef.current = { cpu: [], ram: [], fps: [], tps: [] };
           lastSummaryRef.current = Date.now();
         }
       }
 
-      // Tail game log
+      // Tail game log — resolve instance path from saved instances
       if (active) {
         try {
-          const [events, newPos] = await invoke<[LogEvent[], number]>("tail_game_log", {
-            instancePath: active.instance_id,
-            fromPos: logPosRef.current,
-          });
-          logPosRef.current = newPos;
-          if (!cancelled && events.length > 0) {
-            setLogEvents((prev) => [...prev, ...events].slice(-50));
+          let instancePath = "";
+          const instances = await invoke<SavedInstance[]>("get_saved_instances");
+          const matched = instances?.find(i => i.id === active.instance_id);
+          if (matched) instancePath = matched.path;
+
+          if (instancePath) {
+            const [events, newPos] = await invoke<[LogEvent[], number]>("tail_game_log", {
+              instancePath,
+              fromPos: logPosRef.current,
+            });
+            logPosRef.current = newPos;
+            if (!cancelled && events.length > 0) {
+              setLogEvents((prev) => [...prev, ...events].slice(-50));
+              for (const evt of events) {
+                const fpsVal = extractFps(evt.message);
+                if (fpsVal !== null) samplesRef.current.fps.push(fpsVal);
+                const tpsVal = extractTps(evt.message);
+                if (tpsVal !== null) samplesRef.current.tps.push(tpsVal);
+              }
+            }
           }
         } catch { /* non-fatal */ }
       }
@@ -140,8 +183,14 @@ export function Sessions() {
               ramPeak,
             }).catch(() => {});
           }
-          await invoke<Session>("end_session", { sessionId: active.id });
+          const endedSession = await invoke<Session>("end_session", { sessionId: active.id });
+          try { await invoke("evaluate_recommendation_outcomes", { sessionId: active.id }); } catch { /* non-fatal */ }
           try { await sessions.execute(); } catch { /* preserved by useInvoke */ }
+          if (!cancelled) {
+            selectSession(endedSession);
+            setToast("Session ended — report ready.");
+            setTimeout(() => setToast(null), 5000);
+          }
           return;
         }
       } catch { /* non-fatal */ }
@@ -215,6 +264,7 @@ export function Sessions() {
   const endSession = async (session: Session) => {
     try {
       await invoke<Session>("end_session", { sessionId: session.id });
+      try { await invoke("evaluate_recommendation_outcomes", { sessionId: session.id }); } catch { /* non-fatal */ }
       await sessions.execute();
       if (selectedSession?.id === session.id) {
         setSelectedSession(null);
@@ -231,6 +281,11 @@ export function Sessions() {
 
   return (
     <div className="space-y-6">
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 bg-primary text-primary-foreground px-4 py-2 rounded-md shadow-lg text-sm animate-in fade-in slide-in-from-top-2">
+          {toast}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Sessions</h1>
         <Button variant="secondary" onClick={handleRefresh} disabled={sessions.loading}>
@@ -447,10 +502,30 @@ export function Sessions() {
                         <dd>{report.session.ram_peak_mb.toFixed(0)} MB</dd>
                       </>
                     )}
+                    {report.avg_fps != null && (
+                      <>
+                        <dt className="text-muted-foreground">Avg FPS</dt>
+                        <dd>{report.avg_fps.toFixed(0)}</dd>
+                      </>
+                    )}
+                    {report.low_1pct_fps != null && (
+                      <>
+                        <dt className="text-muted-foreground">1% Low FPS</dt>
+                        <dd>{report.low_1pct_fps.toFixed(0)}</dd>
+                      </>
+                    )}
+                    {report.avg_tps != null && (
+                      <>
+                        <dt className="text-muted-foreground">Avg TPS</dt>
+                        <dd>{report.avg_tps.toFixed(1)}</dd>
+                      </>
+                    )}
                     <dt className="text-muted-foreground">Recs Applied</dt>
                     <dd>{report.recommendations_applied}</dd>
                     <dt className="text-muted-foreground">Observations</dt>
                     <dd>{report.process_observations}</dd>
+                    <dt className="text-muted-foreground">Telemetry Points</dt>
+                    <dd>{report.telemetry_points}</dd>
                   </dl>
 
                   {/* Session Comparison */}
@@ -579,4 +654,17 @@ function MetricDelta({
       {label}
     </span>
   );
+}
+
+const FPS_RE = /fps\s*[:=]\s*(\d+(?:\.\d+)?)/i;
+const TPS_RE = /tps\s*[:=]\s*(\d+(?:\.\d+)?)/i;
+
+function extractFps(message: string): number | null {
+  const m = FPS_RE.exec(message);
+  return m ? parseFloat(m[1]) : null;
+}
+
+function extractTps(message: string): number | null {
+  const m = TPS_RE.exec(message);
+  return m ? parseFloat(m[1]) : null;
 }

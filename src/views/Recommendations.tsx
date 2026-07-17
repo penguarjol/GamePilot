@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import type { Recommendation, SavedInstance, ConfigAnalysis, ConfigRecommendation } from "@/types";
+import type { Recommendation, SavedInstance, ConfigAnalysis, ConfigRecommendation, RecommendationOutcome } from "@/types";
 
 type FilterStatus = "all" | "new" | "applied" | "ignored" | "deferred";
 
@@ -19,6 +19,7 @@ export function Recommendations() {
   const [statusMap, setStatusMap] = useState<Record<string, string>>({});
   const [configRecs, setConfigRecs] = useState<ConfigRecommendation[]>([]);
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null);
+  const [outcomeMap, setOutcomeMap] = useState<Record<string, RecommendationOutcome[]>>({});
 
   useEffect(() => {
     saved.execute();
@@ -44,6 +45,15 @@ export function Recommendations() {
       setRecommendations(recs);
 
       try {
+        const statuses = await invoke<Record<string, string>>("get_recommendation_statuses", {
+          instanceId: instance.id,
+        });
+        setStatusMap(statuses);
+      } catch {
+        setStatusMap({});
+      }
+
+      try {
         const config = await invoke<ConfigAnalysis>("analyze_configs", {
           instancePath: instance.path,
           modCount: instance.mod_count ?? 0,
@@ -51,6 +61,19 @@ export function Recommendations() {
         setConfigRecs(config.recommendations);
       } catch {
         setConfigRecs([]);
+      }
+
+      try {
+        const outcomes = await invoke<RecommendationOutcome[]>("get_recommendation_outcomes", {
+          instanceId: instance.id,
+        });
+        const grouped: Record<string, RecommendationOutcome[]> = {};
+        for (const o of outcomes) {
+          (grouped[o.recommendation_id] ??= []).push(o);
+        }
+        setOutcomeMap(grouped);
+      } catch {
+        setOutcomeMap({});
       }
     } catch (err) {
       setError(String(err));
@@ -79,6 +102,29 @@ export function Recommendations() {
     if (filterStatus === "ignored") return s === "ignored_once" || s === "ignored_always";
     return s === filterStatus;
   });
+
+  const summarizeOutcome = (recId: string): { label: string; className: string } | null => {
+    const outcomes = outcomeMap[recId];
+    if (!outcomes || outcomes.length === 0) return null;
+    const positives = outcomes.filter((o) => o.outcome === "positive");
+    const negatives = outcomes.filter((o) => o.outcome === "negative");
+    if (positives.length > 0 && negatives.length === 0) {
+      const best = positives.reduce((a, b) =>
+        (a.improvement_percent ?? 0) > (b.improvement_percent ?? 0) ? a : b
+      );
+      return {
+        label: `Verified: +${Math.round(best.improvement_percent ?? 0)}% improvement`,
+        className: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
+      };
+    }
+    if (negatives.length > 0) {
+      return {
+        label: "Mixed results",
+        className: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+      };
+    }
+    return null;
+  };
 
   const handleInstanceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const inst = saved.data?.find((s) => s.id === e.target.value);
@@ -127,6 +173,7 @@ export function Recommendations() {
             <div className="space-y-4">
               {filtered.map((r) => {
                 const status = getRecStatus(r.id);
+                const outcomeBadge = summarizeOutcome(r.id);
                 return (
                   <Card key={r.id} className={`transition-opacity duration-300 ${status !== "new" ? "opacity-60" : ""}`}>
                     <CardContent className="pt-4 space-y-3">
@@ -137,6 +184,11 @@ export function Recommendations() {
                         <Badge variant="secondary">{r.category}</Badge>
                         {status !== "new" && (
                           <Badge variant="default">{status.replace("_", " ")}</Badge>
+                        )}
+                        {outcomeBadge && (
+                          <Badge variant="outline" className={outcomeBadge.className}>
+                            {outcomeBadge.label}
+                          </Badge>
                         )}
                       </div>
                       <h3 className="font-medium">{r.title}</h3>

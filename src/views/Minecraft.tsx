@@ -45,6 +45,9 @@ import type {
   InstallResult,
   OptimizationProfile,
   LaunchProfile,
+  CrashDiagnosis,
+  DiskAdvice,
+  MigrationResult,
 } from "@/types";
 
 export function Minecraft() {
@@ -93,6 +96,12 @@ export function Minecraft() {
 
   const [launchProfile, setLaunchProfile] = useState<LaunchProfile | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
+
+  const [crashDiag, setCrashDiag] = useState<CrashDiagnosis | null>(null);
+  const [diskAdvice, setDiskAdvice] = useState<DiskAdvice | null>(null);
+  const [migrationDialogOpen, setMigrationDialogOpen] = useState(false);
+  const [migrating, setMigrating] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
 
   useEffect(() => {
     saved.execute();
@@ -161,6 +170,9 @@ export function Minecraft() {
     setModpackHealth(null);
     setLaunchResult(null);
     setLaunchProfile(null);
+    setCrashDiag(null);
+    setDiskAdvice(null);
+    setMigrationResult(null);
     setLoading("Scanning instance...");
     try {
       const full = await invoke<MinecraftInstance>("scan_instance", {
@@ -228,6 +240,20 @@ export function Minecraft() {
           instanceId: instance.id,
         });
         setRecStatusMap((prev) => ({ ...prev, ...statuses }));
+      } catch { /* non-fatal */ }
+
+      try {
+        const crashes = await invoke<CrashDiagnosis>("analyze_crashes", { instancePath: instance.path });
+        setCrashDiag(crashes);
+      } catch { /* non-fatal */ }
+
+      try {
+        const xmx = instance.xmx_mb ?? 8192;
+        const disk = await invoke<DiskAdvice>("analyze_disk_for_instance", {
+          instancePath: instance.path,
+          xmxMb: xmx,
+        });
+        setDiskAdvice(disk);
       } catch { /* non-fatal */ }
     } catch (err) {
       toast.error(String(err));
@@ -683,6 +709,49 @@ export function Minecraft() {
     }
   };
 
+  const startMigration = async () => {
+    if (!selectedInstance || !diskAdvice?.best_drive) return;
+    setMigrating(true);
+    setMigrationResult(null);
+    try {
+      const result = await invoke<MigrationResult>("migrate_instance_to_drive", {
+        sourcePath: selectedInstance.path,
+        targetDir: diskAdvice.best_drive.mount_point,
+      });
+      setMigrationResult(result);
+      if (result.success) {
+        toast.success(`Migration complete: ${result.files_copied} files copied`);
+      } else {
+        toast.error(result.message);
+      }
+    } catch (err) {
+      toast.error(`Migration failed: ${err}`);
+    } finally {
+      setMigrating(false);
+    }
+  };
+
+  const deleteOriginalAfterMigration = async () => {
+    if (!migrationResult) return;
+    try {
+      await invoke("delete_migrated_instance", { path: migrationResult.old_path });
+      await invoke("save_instance", {
+        instanceJson: JSON.stringify({ ...selectedInstance, path: migrationResult.new_path }),
+      });
+      const refreshed = await invoke<MinecraftInstance>("scan_instance", {
+        path: migrationResult.new_path,
+        launcher: selectedInstance?.launcher ?? "Custom",
+      });
+      setSelectedInstance(refreshed);
+      await saved.execute();
+      setMigrationDialogOpen(false);
+      setMigrationResult(null);
+      toast.success("Original deleted and instance path updated");
+    } catch (err) {
+      toast.error(`Delete failed: ${err}`);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -792,6 +861,122 @@ export function Minecraft() {
         <div className="flex-1 min-w-0 space-y-4">
           {selectedInstance ? (
             <>
+              {/* Crash Diagnosis */}
+              {crashDiag?.crash_detected && (
+                <Card className="border-destructive">
+                  <CardHeader>
+                    <div className="flex items-center gap-2">
+                      <CardTitle className="text-destructive">
+                        {crashDiag.crash_type ?? "Crash Detected"}
+                      </CardTitle>
+                      <Badge variant="destructive">crash</Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-sm">{crashDiag.summary}</p>
+                    {crashDiag.recommendations.length > 0 && (
+                      <div className="space-y-2">
+                        {crashDiag.recommendations.map((rec, i) => (
+                          <div key={i} className="rounded-lg border border-border p-3 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium">{rec.title}</span>
+                              <Badge
+                                variant={
+                                  rec.priority === "critical" ? "destructive" :
+                                  rec.priority === "high" ? "outline" : "default"
+                                }
+                              >
+                                {rec.priority}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground">{rec.description}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {crashDiag.details.length > 0 && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+                          Show details ({crashDiag.details.length} lines)
+                        </summary>
+                        <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-border bg-muted/50 p-3 font-mono whitespace-pre-wrap">
+                          {crashDiag.details.join("\n")}
+                        </pre>
+                      </details>
+                    )}
+                    {crashDiag.crash_file && (
+                      <p className="text-xs text-muted-foreground font-mono truncate">
+                        Crash file: {crashDiag.crash_file}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Disk Advice */}
+              {diskAdvice && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Disk Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {diskAdvice.instance_drive && (
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">
+                            Instance drive: {diskAdvice.instance_drive.mount_point}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {diskAdvice.instance_drive.free_gb.toFixed(1)} GB free of {diskAdvice.instance_drive.total_gb.toFixed(0)} GB
+                            ({diskAdvice.instance_drive.storage_type})
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Progress value={diskAdvice.instance_drive.used_percent} className="w-24" />
+                          {diskAdvice.instance_drive.is_critical && (
+                            <Badge variant="destructive">critical</Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {diskAdvice.paging_file && !diskAdvice.paging_file.is_adequate && (
+                      <div className="rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+                        <span className="font-medium text-warning">Paging file insufficient</span>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Current: {diskAdvice.paging_file.current_size_mb} MB / Recommended: {diskAdvice.paging_file.recommended_size_mb} MB
+                          (Drive: {diskAdvice.paging_file.drive})
+                        </p>
+                      </div>
+                    )}
+                    {diskAdvice.warnings.map((w, i) => (
+                      <div key={i} className="text-xs text-warning">
+                        {w.message}
+                      </div>
+                    ))}
+                    {diskAdvice.best_drive && (
+                      <div className="flex items-center justify-between rounded-lg border border-border p-3">
+                        <div>
+                          <div className="text-sm font-medium">Better drive available</div>
+                          <p className="text-xs text-muted-foreground">
+                            {diskAdvice.best_drive.mount_point} — {diskAdvice.best_drive.free_gb.toFixed(1)} GB free ({diskAdvice.best_drive.storage_type})
+                          </p>
+                          <p className="text-xs text-muted-foreground">{diskAdvice.best_drive.reason}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setMigrationResult(null);
+                            setMigrationDialogOpen(true);
+                          }}
+                        >
+                          Move to {diskAdvice.best_drive.mount_point}
+                        </Button>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <CardHeader>
                   <div className="flex items-start justify-between">
@@ -1538,6 +1723,73 @@ export function Minecraft() {
                       Launch Anyway
                     </Button>
                   </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              {/* Migration Dialog */}
+              <Dialog open={migrationDialogOpen} onOpenChange={setMigrationDialogOpen}>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Migrate Instance</DialogTitle>
+                    <DialogDescription>
+                      Move this instance to a drive with more free space.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm">
+                      <dt className="text-muted-foreground">Source</dt>
+                      <dd className="font-mono text-xs truncate">{selectedInstance?.path}</dd>
+                      <dt className="text-muted-foreground">Target</dt>
+                      <dd className="font-mono text-xs truncate">
+                        {diskAdvice?.best_drive?.mount_point ?? "N/A"}
+                      </dd>
+                    </dl>
+                    {migrationResult ? (
+                      <div className="space-y-3">
+                        <div className={`rounded-lg p-3 text-sm ${migrationResult.success ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>
+                          <p className="font-medium">{migrationResult.success ? "Migration complete" : "Migration failed"}</p>
+                          <p className="text-xs mt-1">{migrationResult.message}</p>
+                          {migrationResult.success && (
+                            <p className="text-xs mt-1">
+                              {migrationResult.files_copied} files / {migrationResult.total_size_mb.toFixed(1)} MB copied
+                            </p>
+                          )}
+                        </div>
+                        {migrationResult.success && (
+                          <div className="rounded-lg border border-destructive/50 p-3 space-y-2">
+                            <p className="text-sm font-medium">Delete original?</p>
+                            <p className="text-xs text-muted-foreground">
+                              This will permanently remove the files at the old location.
+                            </p>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={deleteOriginalAfterMigration}
+                              >
+                                Delete Original
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => setMigrationDialogOpen(false)}
+                              >
+                                Keep Both
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <Button
+                        onClick={startMigration}
+                        disabled={migrating}
+                        className="w-full"
+                      >
+                        {migrating ? "Migrating..." : "Start Migration"}
+                      </Button>
+                    )}
+                  </div>
                 </DialogContent>
               </Dialog>
             </>

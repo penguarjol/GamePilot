@@ -468,3 +468,102 @@ export interface ItemPrice {
   avg_24h_price: number;
   last_low_price: number;
 }
+
+export interface CrashDiagnosis {
+  crash_detected: boolean;
+  crash_type: string | null;
+  summary: string;
+  details: string[];
+  recommendations: CrashRecommendation[];
+  crash_file: string | null;
+  timestamp: string | null;
+}
+
+export interface CrashRecommendation {
+  title: string;
+  description: string;
+  action: string;
+  priority: string;
+}
+
+export interface DiskAdvice {
+  instance_drive: DriveStatus | null;
+  best_drive: DriveRecommendation | null;
+  paging_file: PagingFileStatus | null;
+  warnings: DiskWarning[];
+  recommendations: DiskRecommendation[];
+}
+
+export interface DriveStatus {
+  mount_point: string;
+  total_gb: number;
+  free_gb: number;
+  used_percent: number;
+  is_critical: boolean;
+  storage_type: string;
+}
+
+export interface DriveRecommendation {
+  mount_point: string;
+  free_gb: number;
+  storage_type: string;
+  reason: string;
+}
+
+export interface PagingFileStatus {
+  current_size_mb: number;
+  max_size_mb: number;
+  drive: string;
+  is_system_managed: boolean;
+  is_adequate: boolean;
+  recommended_size_mb: number;
+}
+
+export interface DiskWarning {
+  severity: string;
+  message: string;
+}
+
+export interface DiskRecommendation {
+  title: string;
+  description: string;
+  action: string;
+  priority: string;
+  estimated_gain_gb: number | null;
+}
+
+export interface MigrationResult {
+  success: boolean;
+  old_path: string;
+  new_path: string;
+  files_copied: number;
+  total_size_mb: number;
+  message: string;
+}
+
+export interface BloatwareReport {
+  temp_files: TempFileInfo[];
+  total_temp_size_mb: number;
+  startup_programs: StartupProgram[];
+  cleanup_recommendations: CleanupRecommendation[];
+}
+
+export interface TempFileInfo {
+  path: string;
+  size_mb: number;
+  category: string;
+}
+
+export interface StartupProgram {
+  name: string;
+  command: string;
+  source: string;
+}
+
+export interface CleanupRecommendation {
+  title: string;
+  description: string;
+  estimated_size_mb: number;
+  action: string;
+  safe: boolean;
+}

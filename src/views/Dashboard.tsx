@@ -104,6 +104,16 @@ export function Dashboard() {
         </Card>
       )}
 
+      {hw.data?.disks.some((d) => d.free_gb < 15) && (
+        <div className="rounded-lg border border-warning bg-warning/10 px-4 py-3 text-sm">
+          <span className="font-medium">Low disk space warning:</span>{" "}
+          {hw.data.disks
+            .filter((d) => d.free_gb < 15)
+            .map((d) => `${d.mount_point} (${d.free_gb.toFixed(1)} GB free)`)
+            .join(", ")}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {/* System Health */}
         <Card>

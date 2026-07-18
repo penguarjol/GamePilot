@@ -1,6 +1,6 @@
 [package]
 name = "gamepilot-app"
-version = "2.1.0"
+version = "2.2.0"
 description = "GamePilot — Universal Gaming Intelligence Platform"
 authors = ["GamePilot"]
 edition = "2021"
@@ -39,3 +39,6 @@ xcap = "0.9.6"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+tempfile = "3"

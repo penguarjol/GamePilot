@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { HardwareInfo, ProcessInfo, JavaInstallation } from "@/types";
+import type { HardwareInfo, ProcessInfo, JavaInstallation, BloatwareReport } from "@/types";
 
 export function Diagnostics() {
   const hw = useInvoke<HardwareInfo>("get_hardware_info");
@@ -22,6 +22,8 @@ export function Diagnostics() {
   const java = useInvoke<JavaInstallation[]>("detect_java");
   const [hasScanned, setHasScanned] = useState(false);
   const [ignoredOnce, setIgnoredOnce] = useState<Set<string>>(new Set());
+  const [bloatware, setBloatware] = useState<BloatwareReport | null>(null);
+  const [bloatwareScanning, setBloatwareScanning] = useState(false);
 
   const runScan = async () => {
     setHasScanned(true);
@@ -42,6 +44,18 @@ export function Diagnostics() {
       toast.success(`"${name}" added to ignore rules`);
     } catch (err) {
       toast.error(String(err));
+    }
+  };
+
+  const scanBloatware = async () => {
+    setBloatwareScanning(true);
+    try {
+      const report = await invoke<BloatwareReport>("scan_bloatware");
+      setBloatware(report);
+    } catch (err) {
+      toast.error(`Bloatware scan failed: ${err}`);
+    } finally {
+      setBloatwareScanning(false);
     }
   };
 
@@ -331,9 +345,115 @@ export function Diagnostics() {
                 </TableBody>
               </Table>
             );
-          })() : procs.error ? (
+          })(          ) : procs.error ? (
             <p className="text-sm text-destructive">{procs.error}</p>
           ) : null}
+        </CardContent>
+      </Card>
+
+      {/* System Cleanup */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle>System Cleanup</CardTitle>
+          <Button onClick={scanBloatware} disabled={bloatwareScanning}>
+            {bloatwareScanning ? "Scanning..." : "Scan"}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {bloatware ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 text-sm">
+                <span className="text-muted-foreground">Total temp file size:</span>
+                <Badge variant="secondary">{bloatware.total_temp_size_mb.toFixed(1)} MB</Badge>
+              </div>
+
+              {bloatware.temp_files.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Temp Files</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Path</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead className="text-right">Size (MB)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[...bloatware.temp_files]
+                        .sort((a, b) => b.size_mb - a.size_mb)
+                        .slice(0, 30)
+                        .map((f, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="font-mono text-xs max-w-[300px] truncate">{f.path}</TableCell>
+                            <TableCell>{f.category}</TableCell>
+                            <TableCell className="text-right">{f.size_mb.toFixed(1)}</TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                  {bloatware.temp_files.length > 30 && (
+                    <p className="text-xs text-muted-foreground text-center mt-2">
+                      ...and {bloatware.temp_files.length - 30} more
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {bloatware.cleanup_recommendations.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Cleanup Recommendations</h4>
+                  <div className="space-y-2">
+                    {bloatware.cleanup_recommendations.map((rec, i) => (
+                      <div key={i} className="rounded-lg border border-border p-3 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{rec.title}</span>
+                          {rec.safe && <Badge variant="secondary">safe</Badge>}
+                          {!rec.safe && <Badge variant="destructive">caution</Badge>}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{rec.description}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Estimated savings: {rec.estimated_size_mb.toFixed(0)} MB
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bloatware.startup_programs.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Startup Programs</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Source</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bloatware.startup_programs.map((p, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium text-sm">{p.name}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs">{p.source}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              <Button
+                variant="outline"
+                onClick={() => invoke("shell_open", { path: "cleanmgr" }).catch(() => toast.error("Failed to open Disk Cleanup"))}
+              >
+                Open Disk Cleanup
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Click "Scan" to detect temp files, bloatware, and startup programs.
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

@@ -13,6 +13,7 @@ pub mod platform;
 pub mod recommendations;
 pub mod sessions;
 pub mod sharing;
+pub mod system;
 pub mod telemetry;
 pub mod vision;
 
@@ -79,6 +80,21 @@ async fn is_game_running(process_name: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || hardware::is_process_running(&process_name))
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn analyze_disk_for_instance(
+    instance_path: String,
+    xmx_mb: u32,
+) -> Result<system::disk_advisor::DiskAdvice, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(system::disk_advisor::analyze_disk_for_instance(
+            &instance_path,
+            xmx_mb,
+        ))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // --- Governor ---
@@ -156,6 +172,15 @@ async fn analyze_configs(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn analyze_crashes(instance_path: String) -> Result<minecraft::crash::CrashDiagnosis, String> {
+    tokio::task::spawn_blocking(move || {
+        Ok(minecraft::crash::analyze_crashes(std::path::Path::new(&instance_path)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1806,6 +1831,39 @@ async fn test_discord_webhook(webhook_url: String) -> Result<(), String> {
     sharing::send_test_to_discord(&webhook_url).await
 }
 
+// --- System: Migration & Bloatware ---
+
+#[tauri::command]
+async fn migrate_instance_to_drive(
+    source_path: String,
+    target_dir: String,
+) -> Result<system::migration::MigrationResult, String> {
+    tokio::task::spawn_blocking(move || {
+        system::migration::migrate_instance(
+            std::path::Path::new(&source_path),
+            std::path::Path::new(&target_dir),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn delete_migrated_instance(path: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        system::migration::delete_old_instance(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn scan_bloatware() -> Result<system::bloatware::BloatwareReport, String> {
+    tokio::task::spawn_blocking(system::bloatware::scan_bloatware)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // --- Vision ---
 
 #[tauri::command]
@@ -1899,6 +1957,7 @@ pub fn run() {
             get_telemetry_sample,
             get_self_metrics,
             is_game_running,
+            analyze_disk_for_instance,
             get_governor_status,
             discover_all_games,
             discover_steam_games,
@@ -1915,6 +1974,7 @@ pub fn run() {
             analyze_mods,
             get_mod_metadata_version,
             analyze_configs,
+            analyze_crashes,
             get_modpack_health,
             get_recommendations,
             get_recommendations_for_path,
@@ -1972,6 +2032,9 @@ pub fn run() {
             toggle_overlay,
             show_overlay,
             hide_overlay,
+            migrate_instance_to_drive,
+            delete_migrated_instance,
+            scan_bloatware,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

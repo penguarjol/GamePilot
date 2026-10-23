@@ -567,3 +567,216 @@ export interface CleanupRecommendation {
   action: string;
   safe: boolean;
 }
+
+// ── Clipper Types ───────────────────────────────────────────────────────────
+
+export interface Clip {
+  id: string;
+  session_id: string | null;
+  game_id: string | null;
+  source_video: string;
+  clip_path: string | null;
+  start_time_ms: number;
+  end_time_ms: number;
+  duration_ms: number | null;
+  status: "detected" | "scored" | "approved" | "rejected" | "processed" | "posted";
+  composite_score: number | null;
+  decima_confidence: number | null;
+  thumbnail_path: string | null;
+  title: string | null;
+  transcript: string | null;
+  rationale: string | null;
+  mood_scores: MoodScores | null;
+  created_at: string;
+}
+
+export interface MoodScores {
+  skill: number;
+  funny: number;
+  montage: number;
+  viral: number;
+}
+
+export interface ClipSignal {
+  id: string;
+  clip_id: string;
+  signal_type: string;
+  signal_value: number;
+  signal_data: string | null;
+  timestamp_ms: number;
+}
+
+export interface ClipScore {
+  id: string;
+  clip_id: string;
+  scorer: "decima" | "qwen3" | "vlm" | "manual";
+  score_level: "unwatchable" | "filler" | "decent" | "good" | "viral";
+  confidence: number;
+  escalated: boolean;
+  rationale: string | null;
+  scored_at: string;
+}
+
+export interface ClipFeedback {
+  id: string;
+  clip_id: string;
+  action: "approve" | "reject" | "favorite" | "skip";
+  rating: number | null;
+  rationale_agreed: boolean | null;
+  written_reason: string | null;
+  feedback_at: string;
+}
+
+export interface ProcessingJob {
+  id: string;
+  source_video: string;
+  session_id: string | null;
+  game_id: string | null;
+  status: "queued" | "detecting" | "scoring" | "processing" | "done" | "failed";
+  progress: number;
+  clips_found: number;
+  clips_approved: number;
+  error: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface KeyMoment {
+  timestamp_ms: number;
+  type: "kill" | "death" | "reaction" | "scene_change" | "audio_peak" | "multi_kill" | "assist" | "event" | "custom";
+  label: string;
+  confidence: number;
+  signals: string[];
+}
+
+export type SegmentSource =
+  | { type: "clip"; clip_id: string; source_start_ms: number; source_end_ms: number }
+  | { type: "audio"; path?: string; url?: string; name: string; artist?: string }
+  | { type: "gif"; giphy_id: string; url: string; width: number; height: number }
+  | { type: "sticker"; giphy_id: string; url: string }
+  | { type: "text"; content: string; style: string }
+  | { type: "sfx"; preset_id: string; name: string }
+  | { type: "image"; path?: string; url?: string };
+
+export type Effect =
+  | { type: "speed"; factor: number }
+  | { type: "zoom"; center_x: number; center_y: number; scale: number }
+  | { type: "shake"; intensity: number; duration_ms: number }
+  | { type: "voice_mod"; preset: string }
+  | { type: "fade"; direction: "in" | "out"; duration_ms: number }
+  | { type: "crop"; mode: "track" | "center" | "general" }
+  | { type: "blur_bg" }
+  | { type: "opacity"; value: number }
+  | { type: "impact_text"; text: string; style: string };
+
+export interface Segment {
+  id: string;
+  track_id: string;
+  start_ms: number;
+  end_ms: number;
+  source: SegmentSource;
+  effects: Effect[];
+}
+
+export interface Track {
+  id: string;
+  track_type: "video" | "audio" | "overlay" | "caption" | "effect";
+  segments: Segment[];
+  muted: boolean;
+  volume: number;
+  locked: boolean;
+}
+
+export interface Composition {
+  id: string;
+  clip_id: string;
+  duration_ms: number;
+  output_format: "16:9" | "9:16" | "1:1";
+  tracks: Track[];
+  key_moments: KeyMoment[];
+  recipe_id: string | null;
+}
+
+export interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  is_builtin: boolean;
+  effects_per_moment: Record<string, Effect[]>;
+  caption_style: string;
+  transition_style: string;
+  trending_sound_id: string | null;
+}
+
+export interface MoodProfile {
+  id: string;
+  name: string;
+  description: string;
+  weight_audio: number;
+  weight_scene: number;
+  weight_yolo: number;
+  weight_whisper: number;
+  weight_vlm: number;
+  weight_trend: number;
+  decima_prompt: string;
+}
+
+export interface ScoringConfig {
+  game_id: string;
+  profile_id: string;
+  decima_tau: number;
+  weights: MoodProfile;
+}
+
+export interface SidecarStatus {
+  running: boolean;
+  port: number | null;
+  pid: number | null;
+  version: string | null;
+  uptime_s: number | null;
+}
+
+export interface DistributionEntry {
+  id: string;
+  clip_id: string;
+  platform: string;
+  post_id: string | null;
+  status: "pending" | "scheduled" | "posted" | "failed";
+  scheduled_at: string | null;
+  posted_at: string | null;
+  engagement_data: EngagementData | null;
+}
+
+export interface EngagementData {
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+}
+
+export interface TrendingSound {
+  id: string;
+  title: string;
+  artist: string;
+  rank: number;
+  user_count: number;
+  play_url: string;
+  platform: string;
+}
+
+export interface RecordingConfig {
+  use_builtin: boolean;
+  encoder: string;
+  quality_preset: string;
+  replay_buffer_seconds: number;
+  hotkey_clip: string;
+  hotkey_bookmark: string;
+  storage_limit_gb: number;
+}
+
+export interface WatchFolder {
+  path: string;
+  source: string;
+  active: boolean;
+}

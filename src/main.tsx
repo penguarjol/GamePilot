@@ -17,6 +17,7 @@ import { Sessions } from "@/views/Sessions";
 import { Settings } from "@/views/Settings";
 import { ClipsDashboard } from "@/views/ClipsDashboard";
 import { ProcessingQueue } from "@/views/ProcessingQueue";
+import { ReviewQueue } from "@/views/ReviewQueue";
 import "@/index.css";
 
 document.documentElement.classList.add("dark");
@@ -38,6 +39,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="recommendations" element={<Recommendations />} />
             <Route path="sessions" element={<Sessions />} />
             <Route path="clips" element={<ClipsDashboard />} />
+            <Route path="review" element={<ReviewQueue />} />
             <Route path="processing" element={<ProcessingQueue />} />
             <Route path="settings" element={<Settings />} />
           </Route>

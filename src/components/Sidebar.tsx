@@ -12,6 +12,8 @@ const NAV_ITEMS = [
   { to: "/clips", icon: "\u2702", label: "Clips" },
   { to: "/review", icon: "\u25B7", label: "Review" },
   { to: "/processing", icon: "\u25B6", label: "Processing" },
+  { to: "/editor", icon: "\u270E", label: "Editor" },
+  { to: "/distribution", icon: "\u2709", label: "Posting" },
   { to: "/diagnostics", icon: "\u2699", label: "Diagnostics" },
   { to: "/recommendations", icon: "\u2691", label: "Recommendations" },
   { to: "/sessions", icon: "\u25F7", label: "Sessions" },

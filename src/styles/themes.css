@@ -1,0 +1,123 @@
+/* GamePilot Clipper Themes
+   Applied via data-theme attribute on the root element.
+   Each theme overrides CSS custom properties from the base shadcn/ui dark theme. */
+
+/* 1. Phantom Dark — deep black + violet accent, stealth overlay */
+[data-theme="phantom"] {
+  --background: 240 10% 4%;
+  --foreground: 240 5% 90%;
+  --card: 240 10% 8%;
+  --card-foreground: 240 5% 90%;
+  --popover: 240 10% 6%;
+  --popover-foreground: 240 5% 90%;
+  --primary: 262 83% 65%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 239 84% 67%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 240 10% 12%;
+  --muted-foreground: 240 5% 55%;
+  --accent: 262 83% 65%;
+  --accent-foreground: 0 0% 100%;
+  --border: 240 10% 15%;
+  --ring: 262 83% 65%;
+  --sidebar-background: 240 10% 5%;
+  --sidebar-foreground: 240 5% 80%;
+  --sidebar-border: 240 10% 12%;
+  --sidebar-accent: 262 83% 65%;
+}
+
+/* 2. Neon Edge — charcoal + cyan/magenta, cyberpunk */
+[data-theme="neon"] {
+  --background: 240 8% 7%;
+  --foreground: 240 5% 95%;
+  --card: 240 8% 10%;
+  --card-foreground: 240 5% 95%;
+  --popover: 240 8% 8%;
+  --popover-foreground: 240 5% 95%;
+  --primary: 187 72% 43%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 330 80% 60%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 240 8% 14%;
+  --muted-foreground: 240 5% 55%;
+  --accent: 187 72% 43%;
+  --accent-foreground: 0 0% 100%;
+  --border: 187 30% 20%;
+  --ring: 187 72% 43%;
+  --sidebar-background: 240 8% 6%;
+  --sidebar-foreground: 240 5% 85%;
+  --sidebar-border: 240 8% 12%;
+  --sidebar-accent: 187 72% 43%;
+}
+
+/* 3. Carbon Pro — matte dark + orange, professional NLE */
+[data-theme="carbon"] {
+  --background: 0 0% 9.5%;
+  --foreground: 0 0% 85%;
+  --card: 0 0% 12%;
+  --card-foreground: 0 0% 85%;
+  --popover: 0 0% 10%;
+  --popover-foreground: 0 0% 85%;
+  --primary: 25 95% 53%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 40%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 50%;
+  --accent: 25 95% 53%;
+  --accent-foreground: 0 0% 100%;
+  --border: 0 0% 17%;
+  --ring: 25 95% 53%;
+  --sidebar-background: 0 0% 8%;
+  --sidebar-foreground: 0 0% 75%;
+  --sidebar-border: 0 0% 14%;
+  --sidebar-accent: 25 95% 53%;
+}
+
+/* 4. Arctic Clean — light mode, white + indigo */
+[data-theme="arctic"] {
+  --background: 0 0% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 239 84% 67%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 215 16% 47%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 210 40% 94%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 239 84% 67%;
+  --accent-foreground: 0 0% 100%;
+  --border: 214 32% 86%;
+  --ring: 239 84% 67%;
+  --sidebar-background: 210 40% 96%;
+  --sidebar-foreground: 222 47% 11%;
+  --sidebar-border: 214 32% 90%;
+  --sidebar-accent: 239 84% 67%;
+}
+
+/* 5. Warm Command — warm dark + amber, gaming den */
+[data-theme="warm"] {
+  --background: 20 14% 9%;
+  --foreground: 20 6% 90%;
+  --card: 20 10% 14%;
+  --card-foreground: 20 6% 90%;
+  --popover: 20 14% 10%;
+  --popover-foreground: 20 6% 90%;
+  --primary: 38 92% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 84% 60%;
+  --secondary-foreground: 0 0% 100%;
+  --muted: 20 10% 18%;
+  --muted-foreground: 20 6% 52%;
+  --accent: 38 92% 50%;
+  --accent-foreground: 0 0% 100%;
+  --border: 20 10% 22%;
+  --ring: 38 92% 50%;
+  --sidebar-background: 20 14% 7%;
+  --sidebar-foreground: 20 6% 80%;
+  --sidebar-border: 20 10% 15%;
+  --sidebar-accent: 38 92% 50%;
+}

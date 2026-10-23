@@ -76,7 +76,7 @@ pub fn rollback_file(rollback_point: &RollbackPoint) -> Result<(), String> {
 }
 
 pub fn save_rollback_point(db: &Database, rp: &RollbackPoint) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO rollback_points (id, recommendation_id, file_path, original_hash, backup_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![rp.id, rp.recommendation_id, rp.file_path, rp.original_hash, rp.backup_path, rp.created_at],
@@ -85,7 +85,7 @@ pub fn save_rollback_point(db: &Database, rp: &RollbackPoint) -> Result<(), Stri
 }
 
 pub fn get_rollback_points(db: &Database, recommendation_id: &str) -> Result<Vec<RollbackPoint>, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     let mut stmt = conn
         .prepare("SELECT id, recommendation_id, file_path, original_hash, backup_path, created_at FROM rollback_points WHERE recommendation_id = ?1 AND restored_at IS NULL ORDER BY created_at DESC")
         .map_err(|e| format!("DB error: {}", e))?;

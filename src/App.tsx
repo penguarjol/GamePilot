@@ -15,15 +15,20 @@ function App() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<string | null>("get_preference", { key: "theme" }).then((val) => {
-      if (val === "light") {
-        document.documentElement.classList.remove("dark");
-      }
-    }).catch(() => {});
+    async function init() {
+      try {
+        const theme = await invoke<string | null>("get_preference", { key: "theme" });
+        if (theme === "light") {
+          document.documentElement.classList.remove("dark");
+        }
+      } catch { /* non-fatal */ }
 
-    invoke<string | null>("get_preference", { key: "onboarding_complete" }).then((val) => {
-      if (val === null) setOnboarding(0);
-    }).catch(() => {});
+      try {
+        const done = await invoke<string | null>("get_preference", { key: "onboarding_complete" });
+        if (done === null) setOnboarding(0);
+      } catch { /* non-fatal */ }
+    }
+    init();
   }, []);
 
   const runScan = useCallback(async () => {
@@ -85,7 +90,7 @@ function App() {
               {onboarding === 0 && (
                 <>
                   <p className="text-muted-foreground">
-                    GamePilot analyzes your Minecraft setup and provides performance recommendations. All data stays local on your machine.
+                    GamePilot optimizes your games, auto-clips your best moments, and posts them to social. It detects your hardware, finds performance issues, and processes your recordings with local AI. All data stays on your machine.
                   </p>
                   <div className="flex gap-2 justify-end">
                     <Button variant="ghost" onClick={skipOnboarding}>Skip</Button>
@@ -98,7 +103,7 @@ function App() {
                 <>
                   {scanning ? (
                     <div className="space-y-3">
-                      <p className="text-muted-foreground">Detecting hardware and Minecraft instances...</p>
+                      <p className="text-muted-foreground">Detecting your hardware and installed games...</p>
                       <Progress value={null} />
                     </div>
                   ) : (
@@ -161,8 +166,8 @@ function App() {
                 <>
                   <p className="text-muted-foreground">
                     {selectedPath
-                      ? "Your instance is ready to analyze. Head to the Minecraft tab to run a full scan."
-                      : "Setup complete. You can add instances from the Minecraft tab whenever you're ready."}
+                      ? "Your instance is ready to analyze. Check the Clips tab after your next session for auto-detected highlights."
+                      : "Setup complete. GamePilot will detect your games automatically. Check the Clips tab after a gaming session."}
                   </p>
                   <div className="flex gap-2 justify-end">
                     <Button onClick={finishOnboarding}>Get Started</Button>

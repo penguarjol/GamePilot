@@ -45,7 +45,7 @@ pub fn create_session(db: &Database, instance_id: &str, launch_method: &str) -> 
         notes: None,
     };
 
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO sessions (id, instance_id, started_at, launch_method, status) VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![session.id, session.instance_id, session.started_at, session.launch_method, session.status],
@@ -59,7 +59,7 @@ pub fn create_session(db: &Database, instance_id: &str, launch_method: &str) -> 
 pub fn end_session(db: &Database, session_id: &str) -> Result<Session, String> {
     let now = chrono::Utc::now();
     let now_str = now.to_rfc3339();
-    let conn = db.conn();
+    let conn = db.conn()?;
 
     let started_at: String = conn
         .query_row(
@@ -90,7 +90,7 @@ pub fn store_session_telemetry(
     ram_avg: f64,
     ram_peak: f64,
 ) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "UPDATE sessions SET cpu_avg_percent = ?1, ram_avg_mb = ?2, ram_peak_mb = ?3 WHERE id = ?4",
         rusqlite::params![cpu_avg, ram_avg, ram_peak, session_id],
@@ -100,7 +100,7 @@ pub fn store_session_telemetry(
 }
 
 pub fn get_session(db: &Database, session_id: &str) -> Result<Session, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.query_row(
         "SELECT id, instance_id, started_at, ended_at, duration_secs, launch_method, cpu_avg_percent, ram_avg_mb, ram_peak_mb, status, notes FROM sessions WHERE id = ?1",
         rusqlite::params![session_id],
@@ -123,7 +123,7 @@ pub fn get_session(db: &Database, session_id: &str) -> Result<Session, String> {
 }
 
 pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Result<Vec<Session>, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
 
     let query = match instance_id {
         Some(_) => "SELECT id, instance_id, started_at, ended_at, duration_secs, launch_method, cpu_avg_percent, ram_avg_mb, ram_peak_mb, status, notes FROM sessions WHERE instance_id = ?1 ORDER BY started_at DESC LIMIT 50",
@@ -164,7 +164,7 @@ pub fn list_sessions(db: &Database, instance_id: Option<&str>) -> Result<Vec<Ses
 pub fn generate_report(db: &Database, session_id: &str) -> Result<SessionReport, String> {
     let session = get_session(db, session_id)?;
 
-    let conn = db.conn();
+    let conn = db.conn()?;
     let rec_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM recommendations WHERE session_id = ?1",

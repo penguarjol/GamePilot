@@ -33,7 +33,7 @@ pub struct ClipSignal {
 }
 
 pub fn create_clip(db: &Database, clip: &Clip) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO clips (id, session_id, game_id, source_video, clip_path, start_time_ms, end_time_ms, duration_ms, status, composite_score, decima_confidence, thumbnail_path, title, transcript, rationale, mood_scores)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
@@ -48,7 +48,7 @@ pub fn create_clip(db: &Database, clip: &Clip) -> Result<(), String> {
 }
 
 pub fn get_clip(db: &Database, clip_id: &str) -> Result<Clip, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.query_row(
         "SELECT id, session_id, game_id, source_video, clip_path, start_time_ms, end_time_ms, duration_ms, status, composite_score, decima_confidence, thumbnail_path, title, transcript, rationale, mood_scores, created_at FROM clips WHERE id = ?1",
         rusqlite::params![clip_id],
@@ -75,7 +75,7 @@ pub fn get_clip(db: &Database, clip_id: &str) -> Result<Clip, String> {
 }
 
 pub fn list_clips(db: &Database, game_id: Option<&str>, status: Option<&str>, limit: u32) -> Result<Vec<Clip>, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     let mut conditions = vec!["1=1".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![];
 
@@ -126,7 +126,7 @@ pub fn list_clips(db: &Database, game_id: Option<&str>, status: Option<&str>, li
 }
 
 pub fn update_clip_status(db: &Database, clip_id: &str, status: &str) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "UPDATE clips SET status = ?1 WHERE id = ?2",
         rusqlite::params![status, clip_id],
@@ -135,7 +135,7 @@ pub fn update_clip_status(db: &Database, clip_id: &str, status: &str) -> Result<
 }
 
 pub fn store_clip_signal(db: &Database, signal: &ClipSignal) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO clip_signals (id, clip_id, signal_type, signal_value, signal_data, timestamp_ms) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         rusqlite::params![signal.id, signal.clip_id, signal.signal_type, signal.signal_value, signal.signal_data, signal.timestamp_ms],

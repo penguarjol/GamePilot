@@ -12,7 +12,7 @@ pub struct ClipFeedback {
 }
 
 pub fn store_feedback(db: &crate::db::Database, feedback: &ClipFeedback) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO clip_feedback (id, clip_id, action, rating, rationale_agreed, written_reason)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",

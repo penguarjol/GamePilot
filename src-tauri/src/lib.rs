@@ -20,7 +20,6 @@ pub mod vision;
 
 use db::Database;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use tauri::Manager;
 
 struct AppState {
@@ -42,11 +41,11 @@ async fn get_hardware_info() -> Result<hardware::HardwareInfo, String> {
 
 #[tauri::command]
 async fn get_process_info(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<hardware::ProcessInfo>, String> {
     let ignore_patterns: Vec<String> = {
-        let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-        let conn = app.db.conn();
+        
+        let conn = state.db.conn()?;
         let mut stmt = conn
             .prepare("SELECT pattern FROM ignore_rules WHERE rule_type = 'process'")
             .map_err(|e| format!("DB error: {}", e))?;
@@ -346,14 +345,14 @@ async fn get_recommendations(
 fn update_recommendation_status(
     recommendation_id: String,
     status: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let valid_statuses = ["new", "accepted", "applied", "ignored_once", "ignored_always", "deferred", "rolled_back", "failed"];
     if !valid_statuses.contains(&status.as_str()) {
         return Err(format!("Invalid status: {}", status));
     }
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let old_status: String = conn
         .query_row(
@@ -372,7 +371,7 @@ fn update_recommendation_status(
         return Err("Recommendation not found".to_string());
     }
 
-    events::emit(&app.app_handle, &events::GamePilotEvent::RecommendationStatusChanged {
+    events::emit(&state.app_handle, &events::GamePilotEvent::RecommendationStatusChanged {
         recommendation_id,
         old_status,
         new_status: status,
@@ -384,13 +383,13 @@ fn update_recommendation_status(
 #[tauri::command]
 fn save_recommendation(
     rec_json: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let rec: minecraft::rules::Recommendation =
         serde_json::from_str(&rec_json).map_err(|e| e.to_string())?;
 
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "INSERT OR REPLACE INTO recommendations \
          (id, category, severity, confidence, title, description, evidence, \
@@ -422,13 +421,11 @@ fn launch_instance(
     instance_id: String,
     launcher: String,
     instance_path: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> launch::LaunchResult {
-    let (saved_java_path, saved_jvm_args) = state
-        .lock()
+    let (saved_java_path, saved_jvm_args) = state.db.conn()
         .ok()
-        .and_then(|app| {
-            let conn = app.db.conn();
+        .and_then(|conn| {
             conn.query_row(
                 "SELECT java_path, jvm_args FROM launch_profiles WHERE instance_id = ?1 ORDER BY updated_at DESC LIMIT 1",
                 rusqlite::params![instance_id],
@@ -448,21 +445,17 @@ fn launch_instance(
     let mut result = launch::launch_instance(&profile);
 
     if result.success {
-        if let Ok(app) = state.lock() {
-            match sessions::create_session(&app.db, &instance_id, &result.method) {
-                Ok(session) => {
-                    result.session_id = Some(session.id.clone());
-                    log::info!("Session created: {}", session.id);
-                    events::emit(&app.app_handle, &events::GamePilotEvent::GameLaunched {
-                        instance_id,
-                        session_id: session.id,
-                        method: result.method.clone(),
-                    });
-                }
-                Err(e) => log::error!("Failed to create session: {}", e),
+        match sessions::create_session(&state.db, &instance_id, &result.method) {
+            Ok(session) => {
+                result.session_id = Some(session.id.clone());
+                log::info!("Session created: {}", session.id);
+                events::emit(&state.app_handle, &events::GamePilotEvent::GameLaunched {
+                    instance_id,
+                    session_id: session.id,
+                    method: result.method.clone(),
+                });
             }
-        } else {
-            log::error!("Failed to acquire state lock for session creation");
+            Err(e) => log::error!("Failed to create session: {}", e),
         }
     }
 
@@ -471,7 +464,7 @@ fn launch_instance(
 
 #[tauri::command]
 fn auto_detect_and_manage_session(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Option<serde_json::Value>, String> {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes();
@@ -498,8 +491,8 @@ fn auto_detect_and_manage_session(
         })
     });
 
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let active_session: Option<String> = conn
         .query_row(
@@ -512,14 +505,14 @@ fn auto_detect_and_manage_session(
     match (active_session, detected_game) {
         (None, Some((game_id, process_name))) => {
             let session = sessions::create_session(
-                &app.db,
+                &state.db,
                 &format!("auto-{}", game_id),
                 &format!("Auto-detected: {}", process_name),
             )
             .map_err(|e| format!("Session create failed: {}", e))?;
 
             events::emit(
-                &app.app_handle,
+                &state.app_handle,
                 &events::GamePilotEvent::GameLaunched {
                     instance_id: format!("auto-{}", game_id),
                     session_id: session.id.clone(),
@@ -535,11 +528,11 @@ fn auto_detect_and_manage_session(
             })))
         }
         (Some(session_id), None) => {
-            let session = sessions::end_session(&app.db, &session_id)
+            let session = sessions::end_session(&state.db, &session_id)
                 .map_err(|e| format!("Session end failed: {}", e))?;
 
             events::emit(
-                &app.app_handle,
+                &state.app_handle,
                 &events::GamePilotEvent::GameExited {
                     instance_id: session.instance_id.clone(),
                     session_id: session.id.clone(),
@@ -566,17 +559,17 @@ fn store_session_telemetry(
     cpu_avg: f64,
     ram_avg: f64,
     ram_peak: f64,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    sessions::store_session_telemetry(&app.db, &session_id, cpu_avg, ram_avg, ram_peak)
+    
+    sessions::store_session_telemetry(&state.db, &session_id, cpu_avg, ram_avg, ram_peak)
 }
 
 #[tauri::command]
 async fn get_recommendations_for_path(
     instance_path: String,
     launcher: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<minecraft::rules::Recommendation>, String> {
     let path_clone = instance_path.clone();
     let recs = tokio::task::spawn_blocking(move || {
@@ -596,8 +589,8 @@ async fn get_recommendations_for_path(
 
     let instance_id = compute_instance_id(&instance_path);
 
-    if let Ok(app) = state.lock() {
-        let conn = app.db.conn();
+    {
+        let conn = state.db.conn()?;
         for rec in &recs {
             conn.execute(
                 "INSERT OR IGNORE INTO recommendations \
@@ -619,10 +612,10 @@ async fn get_recommendations_for_path(
 #[tauri::command]
 fn get_recommendation_statuses(
     instance_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<std::collections::HashMap<String, String>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     let mut stmt = conn.prepare(
         "SELECT id, status FROM recommendations WHERE instance_id = ?1 AND status != 'new'"
     ).map_err(|e| format!("DB error: {}", e))?;
@@ -639,28 +632,28 @@ fn get_recommendation_statuses(
 #[tauri::command]
 fn end_session(
     session_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<sessions::Session, String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    sessions::end_session(&app.db, &session_id)
+    
+    sessions::end_session(&state.db, &session_id)
 }
 
 #[tauri::command]
 fn get_sessions(
     instance_id: Option<String>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<sessions::Session>, String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    sessions::list_sessions(&app.db, instance_id.as_deref())
+    
+    sessions::list_sessions(&state.db, instance_id.as_deref())
 }
 
 #[tauri::command]
 fn get_session_report(
     session_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<sessions::SessionReport, String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    sessions::generate_report(&app.db, &session_id)
+    
+    sessions::generate_report(&state.db, &session_id)
 }
 
 // --- Mod Metadata ---
@@ -707,11 +700,11 @@ async fn install_modrinth_mod(
     download_url: String,
     filename: String,
     mods_dir: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<minecraft::modstore::InstallResult, String> {
     let app_handle = {
-        let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-        app.app_handle.clone()
+        
+        state.app_handle.clone()
     };
 
     let result = minecraft::modstore::install_mod(
@@ -771,7 +764,7 @@ fn apply_jvm_settings(
     jvm_args: Option<String>,
     java_path: Option<String>,
     recommendation_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<recommendations::RollbackPoint, String> {
     let path = std::path::Path::new(&instance_path);
 
@@ -787,9 +780,9 @@ fn apply_jvm_settings(
         return Err("No recognized launcher config found. Supported: Prism/MultiMC (instance.cfg), CurseForge (minecraftinstance.json), ATLauncher (instance.json), Modrinth (profile.json)".to_string());
     };
 
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    
     let rp = recommendations::backup_file(&cfg_path, &recommendation_id)?;
-    recommendations::save_rollback_point(&app.db, &rp)?;
+    recommendations::save_rollback_point(&state.db, &rp)?;
 
     let content = std::fs::read_to_string(&cfg_path)
         .map_err(|e| format!("Failed to read config: {}", e))?;
@@ -873,7 +866,7 @@ fn apply_jvm_settings(
     }
 
     let instance_id = compute_instance_id(&instance_path);
-    let conn = app.db.conn();
+    let conn = state.db.conn()?;
     for (key, old, new_val) in &changes {
         conn.execute(
             "INSERT INTO optimization_actions (id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value) \
@@ -917,35 +910,35 @@ fn upsert_cfg_value(lines: &mut Vec<String>, key: &str, value: &str) {
 fn backup_file(
     file_path: String,
     recommendation_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<recommendations::RollbackPoint, String> {
     let rp = recommendations::backup_file(
         std::path::Path::new(&file_path),
         &recommendation_id,
     )?;
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    recommendations::save_rollback_point(&app.db, &rp)?;
+    
+    recommendations::save_rollback_point(&state.db, &rp)?;
     Ok(rp)
 }
 
 #[tauri::command]
 fn rollback_file(
     rollback_point_json: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let rp: recommendations::RollbackPoint =
         serde_json::from_str(&rollback_point_json).map_err(|e| e.to_string())?;
     recommendations::rollback_file(&rp)?;
 
-    if let Ok(app) = state.lock() {
-        let conn = app.db.conn();
+    {
+        let conn = state.db.conn()?;
         conn.execute(
             "UPDATE optimization_actions SET status = 'rolled_back', rolled_back_at = datetime('now') \
              WHERE file_path = ?1 AND status = 'applied'",
             rusqlite::params![rp.file_path],
         ).ok();
 
-        events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationRolledBack {
+        events::emit(&state.app_handle, &events::GamePilotEvent::OptimizationRolledBack {
             recommendation_id: rp.recommendation_id.clone(),
             file_path: rp.file_path.clone(),
         });
@@ -958,17 +951,17 @@ fn rollback_file(
 #[tauri::command]
 fn delete_instance(
     instance_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "DELETE FROM game_instances WHERE id = ?1",
         rusqlite::params![instance_id],
     )
     .map_err(|e| format!("Failed to delete instance: {}", e))?;
 
-    events::emit(&app.app_handle, &events::GamePilotEvent::InstanceRemoved {
+    events::emit(&state.app_handle, &events::GamePilotEvent::InstanceRemoved {
         instance_id,
     });
 
@@ -978,13 +971,13 @@ fn delete_instance(
 #[tauri::command]
 fn save_instance(
     instance_json: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let instance: minecraft::instance::MinecraftInstance =
         serde_json::from_str(&instance_json).map_err(|e| e.to_string())?;
 
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "INSERT OR REPLACE INTO game_instances \
          (id, game_type, name, path, launcher, minecraft_version, loader_type, loader_version, \
@@ -1007,7 +1000,7 @@ fn save_instance(
     )
     .map_err(|e| format!("Failed to save instance: {}", e))?;
 
-    events::emit(&app.app_handle, &events::GamePilotEvent::InstanceAdded {
+    events::emit(&state.app_handle, &events::GamePilotEvent::InstanceAdded {
         instance_id: instance.id,
         name: instance.name,
     });
@@ -1017,10 +1010,10 @@ fn save_instance(
 
 #[tauri::command]
 fn get_saved_instances(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     let mut stmt = conn
         .prepare(
             "SELECT id, name, path, launcher, minecraft_version, loader_type, loader_version, \
@@ -1055,10 +1048,10 @@ fn add_ignore_rule(
     rule_type: String,
     pattern: String,
     reason: Option<String>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "INSERT INTO ignore_rules (id, rule_type, pattern, reason) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![uuid::Uuid::new_v4().to_string(), rule_type, pattern, reason],
@@ -1069,10 +1062,10 @@ fn add_ignore_rule(
 
 #[tauri::command]
 fn get_ignore_rules(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     let mut stmt = conn
         .prepare("SELECT id, rule_type, pattern, reason, created_at FROM ignore_rules ORDER BY created_at DESC")
         .map_err(|e| format!("DB error: {}", e))?;
@@ -1096,10 +1089,10 @@ fn get_ignore_rules(
 #[tauri::command]
 fn remove_ignore_rule(
     rule_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute("DELETE FROM ignore_rules WHERE id = ?1", rusqlite::params![rule_id])
         .map_err(|e| format!("Failed to remove ignore rule: {}", e))?;
     Ok(())
@@ -1133,11 +1126,11 @@ fn store_telemetry_summary(
     fps_avg: Option<f32>,
     fps_low_1pct: Option<f32>,
     tps_avg: Option<f32>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    
     telemetry::store_summary(
-        &app.db, &session_id, cpu_avg, ram_avg, ram_peak, hog_count,
+        &state.db, &session_id, cpu_avg, ram_avg, ram_peak, hog_count,
         fps_avg, fps_low_1pct, tps_avg,
     )
 }
@@ -1148,11 +1141,11 @@ fn store_fps_observation(
     fps_avg: Option<f32>,
     fps_low: Option<f32>,
     tps_avg: Option<f32>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    
     telemetry::store_summary(
-        &app.db, &session_id, 0.0, 0.0, 0.0, 0,
+        &state.db, &session_id, 0.0, 0.0, 0.0, 0,
         fps_avg, fps_low, tps_avg,
     )
 }
@@ -1160,10 +1153,10 @@ fn store_fps_observation(
 #[tauri::command]
 fn get_telemetry_summaries(
     session_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<telemetry::TelemetrySummary>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    telemetry::get_summaries(&app.db, &session_id)
+    
+    telemetry::get_summaries(&state.db, &session_id)
 }
 
 // --- Optimization History ---
@@ -1171,10 +1164,10 @@ fn get_telemetry_summaries(
 #[tauri::command]
 fn get_optimization_history(
     instance_id: Option<String>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     let (query, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match &instance_id {
         Some(id) => (
             "SELECT id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value, status, applied_at, rolled_back_at \
@@ -1216,12 +1209,12 @@ fn get_optimization_history(
 #[tauri::command]
 fn evaluate_recommendation_outcomes(
     session_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
-    let session = sessions::get_session(&app.db, &session_id)?;
+    let session = sessions::get_session(&state.db, &session_id)?;
 
     let prev_session: Option<sessions::Session> = conn
         .query_row(
@@ -1340,10 +1333,10 @@ fn evaluate_recommendation_outcomes(
 #[tauri::command]
 fn get_recommendation_outcomes(
     instance_id: Option<String>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let (query, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = match &instance_id {
         Some(id) => (
@@ -1388,10 +1381,10 @@ fn get_recommendation_outcomes(
 
 #[tauri::command]
 fn export_user_data(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let query_json_array = |sql: &str| -> Vec<serde_json::Value> {
         let mut stmt = match conn.prepare(sql) {
@@ -1445,10 +1438,10 @@ fn save_launch_profile(
     xms_mb: Option<i64>,
     pre_launch_actions: Option<String>,
     auto_apply: Option<bool>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let existing_id: Option<String> = conn
         .query_row(
@@ -1473,10 +1466,10 @@ fn save_launch_profile(
 #[tauri::command]
 fn get_launch_profile(
     instance_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Option<serde_json::Value>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     let result = conn.query_row(
         "SELECT id, instance_id, name, java_path, jvm_args, xmx_mb, xms_mb, pre_launch_actions, auto_apply, created_at, updated_at \
@@ -1509,10 +1502,10 @@ fn get_launch_profile(
 #[tauri::command]
 fn delete_launch_profile(
     profile_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "DELETE FROM launch_profiles WHERE id = ?1",
         rusqlite::params![profile_id],
@@ -1526,13 +1519,13 @@ fn delete_launch_profile(
 fn record_process_observation(
     session_id: String,
     processes_json: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let processes: Vec<serde_json::Value> =
         serde_json::from_str(&processes_json).map_err(|e| e.to_string())?;
 
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
 
     for p in &processes {
         let cpu = p.get("cpu_percent").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -1563,10 +1556,10 @@ fn record_process_observation(
 
 #[tauri::command]
 fn delete_all_data(
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute_batch(
         "DELETE FROM recommendation_outcomes; \
          DELETE FROM optimization_actions; \
@@ -1588,13 +1581,9 @@ fn delete_all_data(
 #[tauri::command]
 fn get_preference(
     key: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Option<String> {
-    let app = match state.lock() {
-        Ok(a) => a,
-        Err(_) => return None,
-    };
-    let conn = app.db.conn();
+    let conn = state.db.conn().ok()?;
     conn.query_row(
         "SELECT value FROM user_preferences WHERE key = ?1",
         rusqlite::params![key],
@@ -1607,10 +1596,10 @@ fn get_preference(
 fn set_preference(
     key: String,
     value: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("State lock error: {}", e))?;
-    let conn = app.db.conn();
+    
+    let conn = state.db.conn()?;
     conn.execute(
         "INSERT OR REPLACE INTO user_preferences (key, value, updated_at) VALUES (?1, ?2, datetime('now'))",
         rusqlite::params![key, value],
@@ -1668,18 +1657,18 @@ fn apply_config_change(
     key: String,
     new_value: String,
     recommendation_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<recommendations::RollbackPoint, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    
     let rp = recommendations::apply_config_change(
         std::path::Path::new(&file_path),
         &key,
         &new_value,
         &recommendation_id,
-        &app.db,
+        &state.db,
     )?;
 
-    events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationApplied {
+    events::emit(&state.app_handle, &events::GamePilotEvent::OptimizationApplied {
         recommendation_id,
         file_path,
     });
@@ -1694,7 +1683,7 @@ fn apply_config_change_auto(
     key: String,
     new_value: String,
     recommendation_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<recommendations::RollbackPoint, String> {
     let resolved = recommendations::resolve_config_path(
         std::path::Path::new(&instance_path),
@@ -1714,11 +1703,11 @@ fn apply_config_change_auto(
             })
         });
 
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    let rp = recommendations::apply_config_change(&resolved, &key, &new_value, &recommendation_id, &app.db)?;
+    
+    let rp = recommendations::apply_config_change(&resolved, &key, &new_value, &recommendation_id, &state.db)?;
 
     let instance_id = compute_instance_id(&instance_path);
-    let conn = app.db.conn();
+    let conn = state.db.conn()?;
     conn.execute(
         "INSERT INTO optimization_actions (id, recommendation_id, instance_id, action_type, description, file_path, old_value, new_value) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1735,7 +1724,7 @@ fn apply_config_change_auto(
     ).ok();
 
     let file_path_str = resolved.to_string_lossy().to_string();
-    events::emit(&app.app_handle, &events::GamePilotEvent::OptimizationApplied {
+    events::emit(&state.app_handle, &events::GamePilotEvent::OptimizationApplied {
         recommendation_id,
         file_path: file_path_str,
     });
@@ -1897,21 +1886,21 @@ async fn detect_all_running_games() -> Result<Vec<vision::game_detect::DetectedG
 // --- Overlay ---
 
 #[tauri::command]
-fn toggle_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    overlay::toggle_overlay(&app.app_handle)
+fn toggle_overlay(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    
+    overlay::toggle_overlay(&state.app_handle)
 }
 
 #[tauri::command]
-fn show_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    overlay::show_overlay(&app.app_handle)
+fn show_overlay(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    
+    overlay::show_overlay(&state.app_handle)
 }
 
 #[tauri::command]
-fn hide_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    overlay::hide_overlay(&app.app_handle)
+fn hide_overlay(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    
+    overlay::hide_overlay(&state.app_handle)
 }
 
 // --- Clipper ---
@@ -1921,40 +1910,40 @@ fn list_clips(
     game_id: Option<String>,
     status: Option<String>,
     limit: Option<u32>,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<clipper::clips::Clip>, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    clipper::clips::list_clips(&app.db, game_id.as_deref(), status.as_deref(), limit.unwrap_or(50))
+    
+    clipper::clips::list_clips(&state.db, game_id.as_deref(), status.as_deref(), limit.unwrap_or(50))
 }
 
 #[tauri::command]
 fn get_clip(
     clip_id: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<clipper::clips::Clip, String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    clipper::clips::get_clip(&app.db, &clip_id)
+    
+    clipper::clips::get_clip(&state.db, &clip_id)
 }
 
 #[tauri::command]
 fn update_clip_status(
     clip_id: String,
     new_status: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    clipper::clips::update_clip_status(&app.db, &clip_id, &new_status)
+    
+    clipper::clips::update_clip_status(&state.db, &clip_id, &new_status)
 }
 
 #[tauri::command]
 fn submit_clip_feedback(
     feedback_json: String,
-    state: tauri::State<'_, Mutex<AppState>>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let feedback: clipper::teaching::ClipFeedback =
         serde_json::from_str(&feedback_json).map_err(|e| e.to_string())?;
-    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
-    clipper::teaching::store_feedback(&app.db, &feedback)
+    
+    clipper::teaching::store_feedback(&state.db, &feedback)
 }
 
 #[tauri::command]
@@ -1997,15 +1986,15 @@ pub fn run() {
                 hasher.update(hw.cpu_model.as_bytes());
                 format!("dev-{}", hex::encode(&hasher.finalize()[..8]))
             };
-            let conn = db.conn();
-            conn.execute(
-                "INSERT OR REPLACE INTO devices (id, hostname, os_name, os_version, cpu_model, cpu_cores, cpu_threads, gpu_model, gpu_vram_mb, ram_total_mb, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
-                rusqlite::params![device_id, hw.hostname, hw.os_name, hw.os_version, hw.cpu_model, hw.cpu_cores, hw.cpu_threads, hw.gpu_model, hw.gpu_vram_mb, hw.ram_total_mb],
-            ).ok();
-            drop(conn);
+            if let Ok(conn) = db.conn() {
+                conn.execute(
+                    "INSERT OR REPLACE INTO devices (id, hostname, os_name, os_version, cpu_model, cpu_cores, cpu_threads, gpu_model, gpu_vram_mb, ram_total_mb, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+                    rusqlite::params![device_id, hw.hostname, hw.os_name, hw.os_version, hw.cpu_model, hw.cpu_cores, hw.cpu_threads, hw.gpu_model, hw.gpu_vram_mb, hw.ram_total_mb],
+                ).ok();
+            }
 
-            app.manage(Mutex::new(AppState { db, app_handle: handle }));
+            app.manage(AppState { db, app_handle: handle });
 
             let sidecar = std::sync::Arc::new(clipper::sidecar::SidecarState::new());
             SIDECAR_STATE.set(sidecar.clone()).ok();

@@ -82,9 +82,13 @@ pub async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {
     let token = uuid::Uuid::new_v4().to_string();
     let parent_pid = std::process::id();
 
-    let sidecar_path = find_sidecar_binary()?;
+    let (program, script_arg) = find_sidecar_binary()?;
 
-    let mut child = Command::new(&sidecar_path)
+    let mut cmd = Command::new(&program);
+    if let Some(script) = &script_arg {
+        cmd.arg(script);
+    }
+    let mut child = cmd
         .args([
             "--port", "0",
             "--token", &token,
@@ -173,7 +177,7 @@ pub async fn stop_sidecar(state: &SidecarState) {
     *state.handshake.lock().await = None;
 }
 
-fn find_sidecar_binary() -> Result<String, String> {
+fn find_sidecar_binary() -> Result<(String, Option<String>), String> {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -190,7 +194,7 @@ fn find_sidecar_binary() -> Result<String, String> {
 
         let bundled = dir.join(name);
         if bundled.exists() {
-            return Ok(bundled.to_string_lossy().to_string());
+            return Ok((bundled.to_string_lossy().to_string(), None));
         }
     }
 
@@ -201,7 +205,7 @@ fn find_sidecar_binary() -> Result<String, String> {
     for candidate in &dev_candidates {
         let path = std::path::Path::new(candidate);
         if path.exists() {
-            return Ok(format!("python3 {}", path.display()));
+            return Ok(("python3".to_string(), Some(path.to_string_lossy().to_string())));
         }
     }
 

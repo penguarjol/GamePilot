@@ -173,7 +173,7 @@ pub fn store_summary(
     fps_low_1pct: Option<f32>,
     tps_avg: Option<f32>,
 ) -> Result<(), String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     conn.execute(
         "INSERT INTO telemetry_summaries (id, session_id, minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count, fps_avg, fps_low_1pct, tps_avg) \
          VALUES (?1, ?2, datetime('now'), ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -197,7 +197,7 @@ pub fn get_summaries(
     db: &crate::db::Database,
     session_id: &str,
 ) -> Result<Vec<TelemetrySummary>, String> {
-    let conn = db.conn();
+    let conn = db.conn()?;
     let mut stmt = conn
         .prepare(
             "SELECT minute_ts, cpu_avg, ram_avg_mb, ram_peak_mb, hog_count, fps_avg, fps_low_1pct, tps_avg \

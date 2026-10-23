@@ -1,7 +1,6 @@
-import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import type { ProcessingJob } from "@/types";
@@ -28,7 +27,7 @@ function statusColor(status: string): string {
 }
 
 export function ProcessingQueue() {
-  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const [jobs] = useState<ProcessingJob[]>([]);
 
   const activeJobs = jobs.filter(j => !["done", "failed"].includes(j.status));
   const completedJobs = jobs.filter(j => j.status === "done");

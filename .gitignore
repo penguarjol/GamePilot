@@ -7,3 +7,12 @@ src-tauri/target/
 *.swp
 *.swo
 *~
+
+# Clipper sidecar
+sidecar/.venv/
+sidecar/models/*.pt
+sidecar/models/*.onnx
+sidecar/models/*.bin
+sidecar/models/.whisper_ready
+__pycache__/
+*.pyc

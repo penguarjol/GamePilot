@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Clip, ProcessingJob, MoodScores } from "@/types";
+import type { Clip } from "@/types";
 
 const MOOD_KEYS = ["skill", "funny", "montage", "viral"] as const;
 type MoodKey = (typeof MOOD_KEYS)[number];
@@ -53,7 +53,6 @@ function ConfidenceBar({ value, threshold = 0.8 }: { value: number; threshold?: 
 
 export function ClipsDashboard() {
   const [clips, setClips] = useState<Clip[]>([]);
-  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [gameFilter, setGameFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("all");
   const [moodSort, setMoodSort] = useState<MoodKey>("viral");

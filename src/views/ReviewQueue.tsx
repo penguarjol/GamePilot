@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import type { Clip, MoodProfile, ClipScore, MoodScores } from "@/types";
+import type { Clip } from "@/types";
 
 const MOOD_KEYS = ["skill", "funny", "montage", "viral"] as const;
 type MoodKey = (typeof MOOD_KEYS)[number];
@@ -15,13 +15,6 @@ function scoreTone(score: number): string {
   if (score >= 75) return "text-blue-400";
   if (score >= 60) return "text-yellow-400";
   return "text-red-400";
-}
-
-function scoreLabel(score: number): string {
-  if (score >= 90) return "Viral";
-  if (score >= 75) return "Strong";
-  if (score >= 60) return "Decent";
-  return "Weak";
 }
 
 function ConfidenceBar({ value, threshold = 0.8 }: { value: number; threshold?: number }) {

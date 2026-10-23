@@ -15,6 +15,11 @@ import { Recommendations } from "@/views/Recommendations";
 import { GameLibrary } from "@/views/GameLibrary";
 import { Sessions } from "@/views/Sessions";
 import { Settings } from "@/views/Settings";
+import { ClipsDashboard } from "@/views/ClipsDashboard";
+import { ProcessingQueue } from "@/views/ProcessingQueue";
+import { ReviewQueue } from "@/views/ReviewQueue";
+import { ClipEditor } from "@/views/ClipEditor";
+import { DistributionHub } from "@/views/DistributionHub";
 import "@/index.css";
 
 document.documentElement.classList.add("dark");
@@ -35,6 +40,11 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
             <Route path="diagnostics" element={<Diagnostics />} />
             <Route path="recommendations" element={<Recommendations />} />
             <Route path="sessions" element={<Sessions />} />
+            <Route path="clips" element={<ClipsDashboard />} />
+            <Route path="review" element={<ReviewQueue />} />
+            <Route path="processing" element={<ProcessingQueue />} />
+            <Route path="editor" element={<ClipEditor />} />
+            <Route path="distribution" element={<DistributionHub />} />
             <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>

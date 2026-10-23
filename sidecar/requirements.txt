@@ -1,0 +1,17 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+# Detection
+librosa>=0.10.2
+numpy>=1.26.0
+scenedetect[opencv]>=0.6.4
+faster-whisper>=1.1.0
+ultralytics>=8.3.0
+easyocr>=1.7.2
+opencv-python-headless>=4.10.0
+mediapipe>=0.10.18
+# VLM (loaded on demand)
+transformers>=4.46.0
+torch>=2.5.0
+# Build
+pyinstaller>=6.11.0

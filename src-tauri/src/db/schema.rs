@@ -181,4 +181,147 @@ CREATE TABLE IF NOT EXISTS recommendation_outcomes (
     recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (recommendation_id) REFERENCES recommendations(id)
 );
+
+-- Clipper: Core clip storage
+CREATE TABLE IF NOT EXISTS clips (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    game_id TEXT,
+    source_video TEXT NOT NULL,
+    clip_path TEXT,
+    start_time_ms INTEGER NOT NULL,
+    end_time_ms INTEGER NOT NULL,
+    duration_ms INTEGER,
+    status TEXT NOT NULL DEFAULT 'detected',
+    composite_score REAL,
+    decima_confidence REAL,
+    thumbnail_path TEXT,
+    title TEXT,
+    transcript TEXT,
+    rationale TEXT,
+    mood_scores TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+-- Clipper: Detection signals per clip
+CREATE TABLE IF NOT EXISTS clip_signals (
+    id TEXT PRIMARY KEY,
+    clip_id TEXT NOT NULL,
+    signal_type TEXT NOT NULL,
+    signal_value REAL,
+    signal_data TEXT,
+    timestamp_ms INTEGER,
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
+);
+
+-- Clipper: Scoring results
+CREATE TABLE IF NOT EXISTS clip_scores (
+    id TEXT PRIMARY KEY,
+    clip_id TEXT NOT NULL,
+    scorer TEXT NOT NULL,
+    score_level TEXT,
+    confidence REAL,
+    escalated INTEGER DEFAULT 0,
+    rationale TEXT,
+    scored_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
+);
+
+-- Clipper: User feedback
+CREATE TABLE IF NOT EXISTS clip_feedback (
+    id TEXT PRIMARY KEY,
+    clip_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    rating INTEGER,
+    rationale_agreed INTEGER,
+    written_reason TEXT,
+    feedback_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
+);
+
+-- Clipper: Processing jobs
+CREATE TABLE IF NOT EXISTS processing_jobs (
+    id TEXT PRIMARY KEY,
+    source_video TEXT NOT NULL,
+    session_id TEXT,
+    game_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    progress REAL DEFAULT 0,
+    clips_found INTEGER DEFAULT 0,
+    clips_approved INTEGER DEFAULT 0,
+    error TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Clipper: Distribution log
+CREATE TABLE IF NOT EXISTS distribution_log (
+    id TEXT PRIMARY KEY,
+    clip_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    post_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    scheduled_at TEXT,
+    posted_at TEXT,
+    postiz_post_id TEXT,
+    engagement_data TEXT,
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
+);
+
+-- Clipper: Scoring config per game+profile
+CREATE TABLE IF NOT EXISTS scoring_config (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    decima_tau REAL DEFAULT 0.8,
+    weight_audio REAL DEFAULT 0.15,
+    weight_scene REAL DEFAULT 0.10,
+    weight_yolo REAL DEFAULT 0.35,
+    weight_whisper REAL DEFAULT 0.10,
+    weight_vlm REAL DEFAULT 0.30,
+    weight_trend REAL DEFAULT 0.0,
+    min_clip_duration_ms INTEGER DEFAULT 10000,
+    max_clip_duration_ms INTEGER DEFAULT 60000,
+    clip_padding_before_ms INTEGER DEFAULT 3000,
+    clip_padding_after_ms INTEGER DEFAULT 2000,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Clipper: Recording config
+CREATE TABLE IF NOT EXISTS recording_config (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    use_builtin_recorder INTEGER DEFAULT 0,
+    watch_folders TEXT,
+    encoder TEXT DEFAULT 'h264',
+    quality_preset TEXT DEFAULT 'high',
+    replay_buffer_seconds INTEGER DEFAULT 30,
+    hotkey_clip TEXT DEFAULT 'F10',
+    hotkey_bookmark TEXT DEFAULT 'F8',
+    storage_limit_gb INTEGER DEFAULT 100,
+    per_game_overrides TEXT
+);
+
+-- Clipper: Compositions (editor state)
+CREATE TABLE IF NOT EXISTS compositions (
+    id TEXT PRIMARY KEY,
+    clip_id TEXT NOT NULL,
+    recipe_id TEXT,
+    composition_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (clip_id) REFERENCES clips(id)
+);
+
+-- Clipper: Recipes
+CREATE TABLE IF NOT EXISTS recipes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_builtin INTEGER DEFAULT 0,
+    recipe_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 "#;

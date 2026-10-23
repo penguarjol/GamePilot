@@ -412,6 +412,33 @@ export function Settings() {
               {exporting ? "Exporting..." : "Export Data"}
             </Button>
           </div>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Application Log</p>
+              <p className="text-xs text-muted-foreground">
+                Open the log file for debugging and error reporting
+              </p>
+            </div>
+            <Button variant="outline" onClick={async () => {
+              try {
+                const path = await invoke<string>("get_log_path");
+                await invoke("show_overlay"); // just to verify invoke works
+                toast.success(`Log file: ${path}`);
+                // Use the opener plugin to open the folder
+                const dir = path.substring(0, path.lastIndexOf("\\") || path.lastIndexOf("/"));
+                await invoke("open_path", { path: dir }).catch(() => {
+                  // fallback: just show the path
+                  navigator.clipboard.writeText(path);
+                  toast.info("Log path copied to clipboard");
+                });
+              } catch {
+                toast.error("Could not locate log file");
+              }
+            }}>
+              Open Log Folder
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

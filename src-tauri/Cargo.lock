@@ -1541,6 +1541,7 @@ name = "gamepilot-app"
 version = "3.0.0"
 dependencies = [
  "chrono",
+ "dirs",
  "env_logger",
  "glob",
  "hex",

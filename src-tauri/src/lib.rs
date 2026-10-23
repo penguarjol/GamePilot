@@ -1957,9 +1957,53 @@ async fn get_sidecar_status() -> Result<clipper::sidecar::SidecarStatus, String>
     Ok(state.status().await)
 }
 
+#[tauri::command]
+fn get_log_path(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let dir = state.app_handle.path().app_data_dir()
+        .map_err(|e| format!("Path error: {}", e))?;
+    let log_path = dir.join("gamepilot.log");
+    Ok(log_path.to_string_lossy().to_string())
+}
+
+fn setup_file_logger(log_dir: &std::path::Path) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let log_path = log_dir.join("gamepilot.log");
+
+    let target = Box::new(
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .expect("Failed to open log file"),
+    );
+
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{} [{}] {} — {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .target(env_logger::Target::Pipe(target))
+        .init();
+
+    log::info!("GamePilot v{} started. Log: {}", env!("CARGO_PKG_VERSION"), log_path.display());
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    let fallback_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.gamepilot.app");
+    std::fs::create_dir_all(&fallback_dir).ok();
+    setup_file_logger(&fallback_dir);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -2097,6 +2141,7 @@ pub fn run() {
             submit_clip_feedback,
             get_mood_profiles,
             get_sidecar_status,
+            get_log_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

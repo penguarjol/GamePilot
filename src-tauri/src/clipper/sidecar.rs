@@ -174,37 +174,38 @@ pub async fn stop_sidecar(state: &SidecarState) {
 }
 
 fn find_sidecar_binary() -> Result<String, String> {
-    let candidates = [
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+    if let Some(dir) = &exe_dir {
+        #[cfg(windows)]
+        let name = "clipper-sidecar-x86_64-pc-windows-msvc.exe";
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        let name = "clipper-sidecar-aarch64-apple-darwin";
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        let name = "clipper-sidecar-x86_64-apple-darwin";
+        #[cfg(target_os = "linux")]
+        let name = "clipper-sidecar-x86_64-unknown-linux-gnu";
+
+        let bundled = dir.join(name);
+        if bundled.exists() {
+            return Ok(bundled.to_string_lossy().to_string());
+        }
+    }
+
+    let dev_candidates = [
         "sidecar/api.py",
         "../sidecar/api.py",
     ];
-
-    for candidate in &candidates {
+    for candidate in &dev_candidates {
         let path = std::path::Path::new(candidate);
         if path.exists() {
             return Ok(format!("python3 {}", path.display()));
         }
     }
 
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-
-    if let Some(dir) = exe_dir {
-        let bundled = dir.join("clipper-sidecar");
-        if bundled.exists() {
-            return Ok(bundled.to_string_lossy().to_string());
-        }
-        #[cfg(windows)]
-        {
-            let bundled_exe = dir.join("clipper-sidecar.exe");
-            if bundled_exe.exists() {
-                return Ok(bundled_exe.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    Err("Sidecar binary not found. Run from project root or bundle with PyInstaller.".to_string())
+    Err("Clipper sidecar not found. In dev mode, run from project root. In production, the sidecar should be bundled.".to_string())
 }
 
 pub async fn sidecar_request(

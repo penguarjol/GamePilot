@@ -29,8 +29,37 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install dependencies
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Node dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Python sidecar dependencies
+        run: |
+          cd sidecar
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build sidecar binary
+        run: python sidecar/build.py
+
+      - name: Download FFmpeg
+        run: |
+          $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp
+          $ffmpegBin = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          $ffprobeBin = Get-ChildItem -Path ffmpeg-tmp -Recurse -Filter "ffprobe.exe" | Select-Object -First 1
+          Copy-Item $ffmpegBin.FullName "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"
+          Copy-Item $ffprobeBin.FullName "src-tauri/binaries/ffprobe-x86_64-pc-windows-msvc.exe"
+          Remove-Item -Recurse ffmpeg-tmp, ffmpeg.zip
+
+      - name: Verify bundled binaries
+        run: |
+          Write-Host "Bundled binaries:"
+          Get-ChildItem src-tauri/binaries/
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -40,7 +69,20 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "GamePilot ${{ github.ref_name }}"
-          releaseBody: "See the assets to download and install GamePilot."
+          releaseBody: |
+            ## GamePilot ${{ github.ref_name }}
+
+            Download the installer below. Everything is bundled — no additional setup required.
+
+            **What's included:**
+            - GamePilot app (Tauri 2 + Rust)
+            - Clipper sidecar (Python ML pipeline, bundled as native binary)
+            - FFmpeg (video processing)
+
+            **Optional (for AI scoring rationale):**
+            - Install [Ollama](https://ollama.com) and run `ollama pull qwen3:8b`
+
+            **ML models** (Whisper, YOLO) download automatically on first use.
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true

@@ -1,161 +1,109 @@
 # GamePilot
 
-**Intelligent Minecraft Performance Optimization for Windows**
+**Gaming Intelligence + Auto Clipper for Windows**
 
-GamePilot is a lightweight Windows desktop app that helps Minecraft players get the best performance from their setup. It discovers your Minecraft instances, analyzes modpacks, detects hardware and resource bottlenecks, recommends safe optimizations, and tracks your gaming sessions.
+GamePilot optimizes your PC game performance and auto-clips your best moments. It detects highlights across 14+ games, scores them with local AI, lets you review and edit, then posts to TikTok, YouTube Shorts, Instagram Reels, and 24 more platforms automatically.
+
+## Install
+
+1. Go to [Releases](../../releases/latest)
+2. Download `GamePilot_3.0.0_x64-setup.exe`
+3. Run the installer
+
+Everything is bundled: the app, the clip processing engine, and FFmpeg. No Python, no command-line setup, no extra downloads.
+
+Windows SmartScreen may warn on first run (the app is unsigned). Click "More info" then "Run anyway".
+
+### Optional: AI Scoring Rationale
+
+For detailed AI explanations of why each clip scored the way it did, install [Ollama](https://ollama.com) and run:
+
+```
+ollama pull qwen3:8b
+```
+
+Without Ollama, clip detection and editing still work. Scoring rationale is the only feature that requires it.
+
+### ML Models
+
+Whisper (speech transcription) and YOLO (game event detection) models download automatically on first use. The first clip processing run takes a few extra minutes while models are fetched.
 
 ## Features
 
-- **Instance Discovery** — Automatically detects Minecraft installations from Prism Launcher, CurseForge, Modrinth App, ATLauncher, MultiMC, and the official launcher. Manual folder selection also supported.
-- **Hardware Diagnostics** — Detects CPU, RAM, GPU, and OS details. Identifies resource-heavy background processes (Chrome, Discord, OBS, OneDrive, etc.) that compete with your game.
-- **Smart Recommendations** — Rules-based JVM tuning (Xmx, GC flags, Java version), missing performance mod detection (ModernFix, FerriteCore, Sodium, etc.), and modpack health analysis.
-- **Safe Optimizations** — Every change includes preview, backup, apply, and rollback. No silent modifications.
-- **Launch Integration** — Launch instances through your preferred launcher or open the instance folder for manual launch.
-- **Session Tracking** — Records session history with hardware snapshots and generates post-session reports.
+- **Auto Game Detection** — Detects 14+ games from running processes. Full Steam library scanning.
+- **Auto Clipper** — Six detection signals (audio, scene, speech, YOLO, OCR, VLM) find your best moments after each session.
+- **Local AI Scoring** — Decima scores clips in 20ms on CPU. Qwen3 provides written rationale. No cloud, no cost.
+- **Mood Profiles** — Score clips by intent: Skill, Funny, Montage, or Viral. Same clip, different ranking.
+- **Three Editor Modes** — Quick Post (5 seconds), Recipe Editor (30 seconds), Full Timeline (2+ minutes).
+- **Trending Content** — Browse TikTok trending sounds, GIPHY stickers, and memes in the editor.
+- **Auto-Effects** — Zoom, slow-mo, camera shake, voice mods, captions, and beat-synced cuts applied at key moments.
+- **27-Platform Distribution** — Schedule and auto-post via Postiz to TikTok, YouTube Shorts, Reels, X, Discord, Reddit, and more.
+- **5 UI Themes** — Phantom Dark, Neon Edge, Carbon Pro, Arctic Clean, Warm Command.
+- **Hardware Diagnostics** — CPU, RAM, GPU profiling. Background process detection.
+- **Smart Recommendations** — JVM tuning, performance mods, config optimization with backup and rollback.
+- **Real-Time Overlay** — Performance metrics and warnings during gameplay.
+- **Session Tracking** — Automatic session detection, telemetry, and post-session reports.
+- **Mod Store** — Modrinth integration for Minecraft mod management.
+
+## System Requirements
+
+- Windows 10 or later
+- 4 GB RAM minimum (8 GB recommended for Clipper)
+- NVIDIA GPU recommended for faster detection (CPU fallback works)
 
 ## Tech Stack
 
 - **Desktop Runtime:** [Tauri 2](https://tauri.app/) (Rust backend + WebView2)
 - **Backend:** Rust
-- **Frontend:** React 19 + TypeScript
-- **Build:** Vite
-- **Database:** SQLite (via rusqlite)
-- **Packaging:** NSIS installer for Windows
-
-## Install
-
-### From GitHub Releases
-
-1. Go to [Releases](../../releases/latest)
-2. Download `GamePilot_0.1.0_x64-setup.exe`
-3. Run the installer (Windows SmartScreen may warn — click "More info" then "Run anyway"; the app is unsigned)
-4. Launch GamePilot from the Start Menu
-
-### System Requirements
-
-- Windows 10 or later
-- 4 GB RAM minimum
-- WebView2 Runtime (included with Windows 10 21H2+ and Windows 11)
+- **Frontend:** React 19 + TypeScript + Tailwind CSS + shadcn/ui
+- **Clipper Sidecar:** Python (FastAPI + librosa + PySceneDetect + faster-whisper + YOLO + EasyOCR)
+- **Video Processing:** FFmpeg
+- **Scoring:** Decima (122M ONNX) + Qwen3-8B (Ollama)
+- **Distribution:** Postiz API
+- **Database:** SQLite
 
 ## Development
 
 ### Prerequisites
 
-- [Node.js 22+](https://nodejs.org/)
-- [pnpm](https://pnpm.io/)
+- [Node.js 22+](https://nodejs.org/) + [pnpm](https://pnpm.io/)
 - [Rust](https://rustup.rs/)
-- [Python 3.11+](https://www.python.org/) (for the Clipper sidecar)
-- [FFmpeg](https://ffmpeg.org/) (for clip processing)
-- Platform-specific Tauri dependencies ([see Tauri docs](https://tauri.app/start/prerequisites/))
+- [Python 3.11+](https://www.python.org/)
+- [FFmpeg](https://ffmpeg.org/)
+- Platform-specific [Tauri prerequisites](https://tauri.app/start/prerequisites/)
 
 ### Setup
 
-**Quick start (includes Clipper sidecar):**
-
 ```bash
-# macOS / Linux
-./scripts/setup-clipper.sh
-
-# Windows (PowerShell)
-.\scripts\setup-clipper.ps1
+# Install all dependencies (Node + Python sidecar)
+./scripts/setup-clipper.sh        # macOS / Linux
+.\scripts\setup-clipper.ps1       # Windows PowerShell
 ```
 
-This handles: Node deps, Python venv, sidecar dependencies, FFmpeg check, and model directory.
-
-**Manual setup (frontend only, no Clipper):**
-
-```bash
-pnpm install
-```
-
-### Optional: Ollama for AI Scoring Rationale
-
-The Clipper's scoring rationale requires Ollama with Qwen3. Install from [ollama.com](https://ollama.com), then:
-
-```bash
-ollama pull qwen3:8b
-```
-
-Without Ollama, clip detection and extraction still work. Scoring rationale and mood-aware analysis are skipped.
-
-### Run in development
+### Run
 
 ```bash
 pnpm tauri dev
 ```
 
-The Clipper sidecar (Python) starts automatically with the app. If the sidecar fails to start (missing deps or FFmpeg), the rest of GamePilot still works normally — Clipper features are disabled gracefully.
-
-### Build for production
+### Build release (with bundled sidecar)
 
 ```bash
-pnpm tauri build
+python sidecar/build.py           # Builds sidecar into src-tauri/binaries/
+pnpm tauri build                  # Builds installer with everything bundled
 ```
 
-The installer is output to `src-tauri/target/release/bundle/nsis/`.
-
-### Run tests
+### Tests
 
 ```bash
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-### Verify Clipper sidecar setup
-
-```bash
-python3 sidecar/setup.py --check
-```
-
-### Project structure
-
-```
-src/                    # React/TypeScript frontend
-  components/           # UI components (Sidebar, etc.)
-  views/                # Page views (Dashboard, Clips, Review, Editor, etc.)
-  styles/               # CSS theme and design tokens (includes 5 clipper themes)
-  hooks/                # Custom React hooks
-src-tauri/              # Rust backend
-  src/
-    clipper/            # Clip processing module
-      sidecar.rs        # Python sidecar lifecycle management
-      clips.rs          # Clip CRUD and metadata
-      composition.rs    # Editor composition types
-      scoring.rs        # Decima + Qwen3 scoring cascade
-      watcher.rs        # File system watcher for recordings
-      pipeline.rs       # Processing orchestration
-      distribution.rs   # Postiz social media integration
-      teaching.rs       # Feedback loop and weight calibration
-      trending.rs       # Trending content API clients
-      recorder.rs       # Recording configuration
-    db/                 # SQLite database and schema
-    hardware/           # Hardware detection, process analyzer
-    minecraft/          # Instance discovery, mod analysis, JVM rules
-    launch/             # Launch profiles, instance launching
-    sessions/           # Session tracking and reports
-    recommendations/    # Backup/rollback system
-    platform/           # Platform-specific adapters (Java detection)
-    lib.rs              # Tauri commands and app setup
-sidecar/                # Python ML sidecar (FastAPI)
-  api.py                # Server entrypoint (/health, /detect, /process, /transcribe)
-  setup.py              # Dependency installer and model downloader
-  detection/            # Audio, scene, whisper, YOLO, OCR, VLM modules
-  processing/           # FFmpeg effects, recipes, compilations, thumbnails
-  models/               # ML model weights (downloaded on first use)
-scripts/                # Setup and automation scripts
-tests/
-  fixtures/             # Test fixtures for Minecraft instances
-docs/                   # PRD, ADR, implementation docs
-site/                   # GitHub Pages product site
-.github/workflows/      # CI, release, and Pages deployment
-```
-
 ## Architecture
 
-GamePilot follows a game-agnostic core architecture. The core platform handles hardware detection, process monitoring, recommendation orchestration, optimization execution, and safety/rollback. Minecraft is implemented as the first game module.
+GamePilot is a game-agnostic platform. The core handles hardware detection, process monitoring, optimization, and safety/rollback. Game modules (Minecraft, League, etc.) plug in with game-specific features.
 
-The **Clipper** module adds post-session clip detection, scoring, editing, and distribution. Detection runs in a Python sidecar (FastAPI on localhost) managed by the Tauri app. Scoring uses Decima (122M ONNX, CPU) for fast first-pass and Qwen3-8B via Ollama for rationale. The editor supports three modes: Quick Post (5s), Recipe Editor (30s), and Full Timeline (2+ min). Distribution goes through Postiz (self-hosted, 27 platforms).
-
-See [docs/ADR.md](docs/ADR.md) for architecture decision records and [docs/PRD.md](docs/PRD.md) for the full product requirements.
+The **Clipper** module adds post-session clip detection, scoring, editing, and distribution. Detection runs in a Python sidecar (bundled as a native binary via PyInstaller) managed by the Tauri app. Scoring uses Decima for fast first-pass and Qwen3 via Ollama for rationale. The editor supports Quick Post, Recipe, and Full Timeline modes. Distribution goes through Postiz.
 
 ## License
 

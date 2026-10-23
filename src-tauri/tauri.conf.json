@@ -47,6 +47,10 @@
       "nsis",
       "msi"
     ],
+    "externalBin": [
+      "binaries/clipper-sidecar",
+      "binaries/ffmpeg"
+    ],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

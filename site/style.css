@@ -193,6 +193,15 @@ section + section {
   color: #00d4aa;
 }
 
+.feature-card--accent {
+  border-color: #00d4aa30;
+  background: linear-gradient(135deg, #161b22, #0f1f1a);
+}
+
+.feature-card--accent:hover {
+  border-color: #00d4aa60;
+}
+
 .feature-card h3 {
   font-size: 1rem;
   font-weight: 700;

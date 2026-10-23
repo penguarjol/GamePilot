@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GamePilot — Universal Gaming Intelligence Platform</title>
-  <meta name="description" content="GamePilot is a local-first Windows desktop app that optimizes performance across all your PC games. Auto-detects games, analyzes hardware, recommends optimizations, and provides a real-time overlay — all without cloud accounts or API keys.">
+  <title>GamePilot - Gaming Intelligence + Auto Clipper</title>
+  <meta name="description" content="GamePilot is a local-first Windows desktop app that optimizes your PC games and auto-clips your best moments. Detect highlights, score clips with local AI, edit with trending content, and auto-post to TikTok, YouTube Shorts, and more.">
   <meta name="theme-color" content="#0f1419">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -14,6 +14,7 @@
     <div class="container">
       <a href="#" class="nav-brand" aria-label="GamePilot home">Game<span>Pilot</span></a>
       <ul class="nav-links">
+        <li><a href="#clipper">Clipper</a></li>
         <li><a href="#features">Features</a></li>
         <li><a href="#games">Games</a></li>
         <li><a href="#download">Download</a></li>
@@ -25,86 +26,146 @@
   <section class="hero">
     <div class="container">
       <h1>Game<span>Pilot</span></h1>
-      <p class="tagline">Your PC Gaming Intelligence Platform</p>
+      <p class="tagline">Record. Detect. Score. Edit. Post.</p>
       <p class="description">
-        GamePilot sits alongside every game you play. It detects your hardware,
-        identifies performance bottlenecks, recommends optimizations, and shows
-        a real-time overlay with actionable insights. No cloud accounts, no API
-        keys — it works by understanding what's on your screen and in your system.
+        GamePilot sits alongside every game you play. It optimizes your
+        performance, auto-detects your best moments, scores them with
+        local AI, and posts them to social with one tap.
+        No cloud accounts. No subscriptions. Everything runs on your machine.
       </p>
       <a href="#download" class="hero-cta">Download for Windows &#8595;</a>
-      <p class="hero-meta">Windows 10+ &middot; Open source &middot; Free &middot; Works with any game</p>
+      <p class="hero-meta">Windows 10+ &middot; Open source &middot; Free &middot; v3.0.0</p>
+    </div>
+  </section>
+
+  <section id="clipper">
+    <div class="container">
+      <p class="section-label">New in v3.0</p>
+      <h2 class="section-title">Auto Clipper</h2>
+      <p class="section-subtitle">
+        Your gaming highlights, on autopilot. Play your session, and
+        GamePilot does the rest: detection, scoring, editing, and posting.
+      </p>
+
+      <div class="features-grid">
+
+        <article class="feature-card feature-card--accent">
+          <h3>Multi-Signal Detection</h3>
+          <p>
+            Six detection signals analyze your recordings in parallel: audio
+            peaks, scene changes, speech transcription, YOLO game events, OCR
+            filtering, and VLM scene understanding. Works with any game.
+          </p>
+        </article>
+
+        <article class="feature-card feature-card--accent">
+          <h3>Local AI Scoring</h3>
+          <p>
+            Decima scores every clip candidate in 20ms on your CPU. Uncertain
+            clips escalate to Qwen3 for deeper analysis and a written rationale
+            explaining why the clip scored the way it did. Zero cloud, zero cost.
+          </p>
+        </article>
+
+        <article class="feature-card feature-card--accent">
+          <h3>Mood Profiles</h3>
+          <p>
+            Score the same clip differently depending on your intent. Skill mode
+            finds mechanical plays. Funny mode finds reactions. Montage mode
+            finds rhythm. Viral mode finds hooks. Switch profiles in the review queue.
+          </p>
+        </article>
+
+        <article class="feature-card feature-card--accent">
+          <h3>Three Editor Modes</h3>
+          <p>
+            Quick Post for one-tap publishing. Recipe Editor for template-based
+            edits (TikTok Montage, YouTube Highlight, Skill Showcase, and more).
+            Full Timeline for multi-track editing with effects and overlays.
+          </p>
+        </article>
+
+        <article class="feature-card feature-card--accent">
+          <h3>Trending Content</h3>
+          <p>
+            Browse trending TikTok sounds, GIPHY stickers, and memes directly
+            in the editor. Drag onto the timeline. Beat-sync your montage cuts
+            to the music. Add voice mods, captions, and impact effects.
+          </p>
+        </article>
+
+        <article class="feature-card feature-card--accent">
+          <h3>Auto-Post to 27 Platforms</h3>
+          <p>
+            Connected via Postiz: TikTok, YouTube Shorts, Instagram Reels, X,
+            Discord, Reddit, and more. Schedule 2-4 clips per day, and
+            GamePilot handles formatting per platform automatically.
+          </p>
+        </article>
+
+      </div>
     </div>
   </section>
 
   <section id="features">
     <div class="container">
-      <p class="section-label">Features</p>
+      <p class="section-label">Platform</p>
       <h2 class="section-title">Intelligent optimization for every game</h2>
       <p class="section-subtitle">
         GamePilot runs passively in the background. Launch any game and it
-        automatically starts working — no configuration required.
+        automatically starts working.
       </p>
 
       <div class="features-grid">
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x25C9;</span>
           <h3>Auto Game Detection</h3>
           <p>
-            Detects 14+ games automatically from running processes — Minecraft,
-            League of Legends, Tarkov, RuneScape, Path of Exile, CS2, Fortnite,
+            Detects 14+ games automatically from running processes. Minecraft,
+            League, Tarkov, RuneScape, Path of Exile, CS2, Fortnite,
             VALORANT, and more. Plus full Steam library scanning.
           </p>
         </article>
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x25A4;</span>
           <h3>Real-Time Overlay</h3>
           <p>
-            A transparent, always-on-top overlay floats over your game showing
-            performance metrics, resource hog warnings, and recommendations.
-            Toggleable with one click.
+            A transparent, always-on-top overlay shows performance metrics,
+            resource hog warnings, and recommendations during gameplay.
           </p>
         </article>
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x2736;</span>
           <h3>Hardware Diagnostics</h3>
           <p>
             Profiles your CPU, RAM, GPU, and storage. Detects 20+ background
-            processes that steal performance — Chrome, Discord, OBS, antivirus,
-            RGB software, cloud sync — and warns you before launch.
+            processes that steal performance and warns you before launch.
           </p>
         </article>
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x2192;</span>
           <h3>Smart Recommendations</h3>
           <p>
             Rules-based optimization engine with safe, reversible actions.
-            JVM tuning for Minecraft, performance mod suggestions, config
-            optimization — all with preview, backup, and rollback.
+            JVM tuning, performance mod suggestions, config optimization,
+            all with preview, backup, and rollback.
           </p>
         </article>
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x2752;</span>
           <h3>Mod Store</h3>
           <p>
             Search, download, and install mods directly from Modrinth.
-            One-click performance mod installation. Enable, disable, and
-            manage mods without leaving the app.
+            One-click performance mod installation for Minecraft.
           </p>
         </article>
 
         <article class="feature-card">
-          <span class="feature-icon" aria-hidden="true">&#x25B3;</span>
-          <h3>Passive Sessions</h3>
+          <h3>Session Tracking</h3>
           <p>
-            Automatically tracks your gaming sessions — no button clicks needed.
-            Detects when a game starts and stops, records performance data, and
-            generates post-session reports with trends and next steps.
+            Automatically tracks gaming sessions. Detects when a game starts
+            and stops, records performance data, and generates post-session
+            reports. Clip processing triggers on session end.
           </p>
         </article>
 
@@ -118,7 +179,7 @@
       <h2 class="section-title">Works with the games you play</h2>
       <p class="section-subtitle">
         Deep integration for Minecraft. Game intelligence for League, RuneScape,
-        Path of Exile, and Tarkov. Performance monitoring for any PC game.
+        Path of Exile, and Tarkov. Clip detection for every PC game.
       </p>
 
       <div class="features-grid">
@@ -126,8 +187,7 @@
         <article class="feature-card">
           <h3>Minecraft</h3>
           <p>
-            Full optimization loop: launcher discovery, modpack analysis, JVM
-            tuning, performance mod recommendations, config editing, Modrinth
+            Full optimization: launcher discovery, modpack analysis, JVM tuning,
             mod store, log tailing, health scoring, and session reports.
           </p>
         </article>
@@ -136,110 +196,42 @@
           <h3>League of Legends</h3>
           <p>
             Live Client Data API integration for real-time game stats.
-            Performance optimization and resource hog detection during matches.
+            Kill/death detection for auto-clipping.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <h3>Competitive FPS</h3>
+          <p>
+            YOLO event detection for CS2, Valorant, Fortnite, Overwatch, and
+            Apex Legends with pre-trained models. Kill feeds, headshots,
+            multi-kills, and clutches detected automatically.
           </p>
         </article>
 
         <article class="feature-card">
           <h3>RuneScape / OSRS</h3>
           <p>
-            Player stat lookup via Hiscores API. Grand Exchange price data.
-            RuneLite detection. Skill tracking and performance optimization.
+            Player stat lookup, Grand Exchange prices, RuneLite detection.
           </p>
         </article>
 
         <article class="feature-card">
-          <h3>Path of Exile</h3>
+          <h3>Path of Exile + Tarkov</h3>
           <p>
-            Currency exchange rates from poe.ninja. Economy tracking across
-            leagues. Installation detection for standalone and Steam versions.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Escape from Tarkov</h3>
-          <p>
-            Ammo ballistics comparison from tarkov.dev. Item market prices.
-            Caliber-filtered data tables for loadout planning.
+            PoE currency rates from poe.ninja. Tarkov ammo ballistics and
+            market prices from tarkov.dev.
           </p>
         </article>
 
         <article class="feature-card">
           <h3>Every Other Game</h3>
           <p>
-            Auto-detects CS2, Fortnite, VALORANT, Overwatch, Apex, GTA V,
-            Cyberpunk 2077, WoW, Diablo IV, and any Steam game. Performance
-            monitoring and resource optimization work universally.
+            Generic audio + scene + speech detection works with any game.
+            Performance monitoring and resource optimization are universal.
           </p>
         </article>
 
-      </div>
-    </div>
-  </section>
-
-  <section id="whats-new">
-    <div class="container">
-      <p class="section-label">What's New</p>
-      <h2 class="section-title">v2.1 — Complete PRD Implementation</h2>
-      <p class="section-subtitle">
-        Every functional requirement from the product spec is now addressed.
-      </p>
-
-      <div class="features-grid">
-        <article class="feature-card">
-          <h3>FPS and TPS Tracking</h3>
-          <p>
-            Extracts FPS and TPS data from Minecraft logs during gameplay.
-            Session reports show average FPS, 1% lows, and TPS with
-            historical comparison.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Launch Profiles</h3>
-          <p>
-            Save JVM settings per instance. Auto-apply optimized settings
-            on every launch. Profiles persist across restarts.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Conflict Detection</h3>
-          <p>
-            35-mod curated database detects incompatible combinations
-            (Sodium vs OptiFine) and duplicate functionality (multiple
-            minimaps). Config diff preview before applying changes.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Discord Sharing</h3>
-          <p>
-            Export optimization profiles and share them via Discord
-            webhook. Other users can import profiles directly into
-            their instances.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Crash Diagnosis</h3>
-          <p>
-            Automatically parses crash reports and game logs to identify
-            out-of-memory errors, paging file issues, mod conflicts, and
-            missing dependencies. Tells you exactly what went wrong and
-            how to fix it.
-          </p>
-        </article>
-
-        <article class="feature-card">
-          <h3>Disk Management</h3>
-          <p>
-            Detects when game instances are on a full OS drive, recommends
-            migration to a data drive, checks paging file adequacy, and
-            scans for bloatware and temp files eating disk space. One-click
-            instance migration between drives.
-          </p>
-        </article>
       </div>
     </div>
   </section>
@@ -262,8 +254,17 @@
             <h3>System Requirements</h3>
             <ul>
               <li>Windows 10 or later</li>
-              <li>4 GB RAM minimum</li>
-              <li>No game-specific requirements — works with any PC game</li>
+              <li>4 GB RAM minimum (8 GB for Clipper)</li>
+              <li>NVIDIA GPU recommended for detection (CPU fallback available)</li>
+              <li>FFmpeg (installed automatically or via winget)</li>
+            </ul>
+          </div>
+
+          <div class="sys-requirements" style="margin-top: 1.5rem;">
+            <h3>Optional (for AI Scoring)</h3>
+            <ul>
+              <li>Ollama with Qwen3 for scoring rationale</li>
+              <li>NVIDIA GPU with 6+ GB VRAM for VLM scene analysis</li>
             </ul>
           </div>
         </div>
@@ -287,9 +288,9 @@
       <span>
         GamePilot is
         <a href="https://github.com/penguarjol/GamePilot">open source</a>.
-        Built with Tauri 2 + Rust.
+        Built with Tauri 2 + Rust + Python.
       </span>
-      <span>v2.2.0</span>
+      <span>v3.0.0</span>
     </div>
   </footer>
 

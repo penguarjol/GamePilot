@@ -53,7 +53,7 @@ export function Sidebar() {
       <Separator />
 
       <div className="px-5 py-3">
-        <span className="text-xs text-muted-foreground">v0.1.0</span>
+        <span className="text-xs text-muted-foreground">v3.0.0</span>
       </div>
     </aside>
   );

@@ -9,6 +9,8 @@ const NAV_ITEMS = [
   { to: "/runescape", icon: "\u2726", label: "RuneScape" },
   { to: "/poe", icon: "\u25C7", label: "Path of Exile" },
   { to: "/tarkov", icon: "\u2316", label: "Tarkov" },
+  { to: "/clips", icon: "\u2702", label: "Clips" },
+  { to: "/processing", icon: "\u25B6", label: "Processing" },
   { to: "/diagnostics", icon: "\u2699", label: "Diagnostics" },
   { to: "/recommendations", icon: "\u2691", label: "Recommendations" },
   { to: "/sessions", icon: "\u25F7", label: "Sessions" },

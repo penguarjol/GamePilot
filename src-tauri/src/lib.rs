@@ -1911,6 +1911,54 @@ fn hide_overlay(state: tauri::State<'_, Mutex<AppState>>) -> Result<(), String> 
     overlay::hide_overlay(&app.app_handle)
 }
 
+// --- Clipper ---
+
+#[tauri::command]
+fn list_clips(
+    game_id: Option<String>,
+    status: Option<String>,
+    limit: Option<u32>,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<Vec<clipper::clips::Clip>, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    clipper::clips::list_clips(&app.db, game_id.as_deref(), status.as_deref(), limit.unwrap_or(50))
+}
+
+#[tauri::command]
+fn get_clip(
+    clip_id: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<clipper::clips::Clip, String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    clipper::clips::get_clip(&app.db, &clip_id)
+}
+
+#[tauri::command]
+fn update_clip_status(
+    clip_id: String,
+    new_status: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    clipper::clips::update_clip_status(&app.db, &clip_id, &new_status)
+}
+
+#[tauri::command]
+fn submit_clip_feedback(
+    feedback_json: String,
+    state: tauri::State<'_, Mutex<AppState>>,
+) -> Result<(), String> {
+    let feedback: clipper::teaching::ClipFeedback =
+        serde_json::from_str(&feedback_json).map_err(|e| e.to_string())?;
+    let app = state.lock().map_err(|e| format!("Lock error: {}", e))?;
+    clipper::teaching::store_feedback(&app.db, &feedback)
+}
+
+#[tauri::command]
+fn get_mood_profiles() -> Vec<clipper::scoring::MoodProfile> {
+    clipper::scoring::MoodProfile::defaults()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::init();
@@ -2036,6 +2084,11 @@ pub fn run() {
             migrate_instance_to_drive,
             delete_migrated_instance,
             scan_bloatware,
+            list_clips,
+            get_clip,
+            update_clip_status,
+            submit_clip_feedback,
+            get_mood_profiles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

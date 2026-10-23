@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["full"] }
 walkdir = "2"
 reqwest = { version = "0.13.4", features = ["json", "query"] }
 xcap = "0.9.6"
+notify = "7"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

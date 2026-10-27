@@ -38,6 +38,7 @@ reqwest = { version = "0.13.4", features = ["json", "query"] }
 xcap = "0.9.6"
 notify = "7"
 dirs = "6"
+urlencoding = "2"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

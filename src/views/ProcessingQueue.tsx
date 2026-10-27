@@ -1,12 +1,24 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import type { ProcessingJob } from "@/types";
+
+interface Job {
+  id: string;
+  source_video: string;
+  game_id: string | null;
+  status: string;
+  progress: number;
+  clips_found: number;
+  clips_approved: number;
+  error: string | null;
+  created_at: string;
+}
 
 function stageLabel(status: string): string {
   switch (status) {
@@ -20,26 +32,61 @@ function stageLabel(status: string): string {
   }
 }
 
-function statusColor(status: string): string {
-  switch (status) {
-    case "done": return "text-green-400";
-    case "failed": return "text-red-400";
-    case "detecting": case "scoring": case "processing": return "text-blue-400";
-    default: return "text-muted-foreground";
-  }
-}
-
 export function ProcessingQueue() {
-  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+  const navigate = useNavigate();
+  const [jobs, setJobs] = useState<Job[]>([]);
 
   const loadJobs = useCallback(async () => {
     try {
-      const result = await invoke<ProcessingJob[]>("get_processing_jobs");
-      setJobs(result as unknown as ProcessingJob[]);
+      const result = await invoke<Job[]>("get_processing_jobs");
+      setJobs(result);
     } catch { setJobs([]); }
   }, []);
 
-  useEffect(() => { loadJobs(); const i = setInterval(loadJobs, 5000); return () => clearInterval(i); }, [loadJobs]);
+  useEffect(() => {
+    loadJobs();
+    const i = setInterval(loadJobs, 5000);
+    return () => clearInterval(i);
+  }, [loadJobs]);
+
+  const processFile = async () => {
+    try {
+      const file = await open({ multiple: false, filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "avi", "webm"] }] });
+      if (!file) return;
+      const name = typeof file === "string" ? file.split(/[/\\]/).pop() : String(file);
+      toast.info(`Processing: ${name}`);
+      const result = await invoke<Record<string, unknown>>("process_video_file", { videoPath: file, gameId: null });
+      toast.success(`Done. Found ${result.candidates ?? 0} clip candidates.`);
+      loadJobs();
+    } catch (e) {
+      toast.error(`Failed: ${e}`);
+    }
+  };
+
+  const deleteJob = async (jobId: string) => {
+    try {
+      await invoke("delete_processing_job", { jobId });
+      toast.success("Job removed");
+      loadJobs();
+    } catch (e) { toast.error(`Delete failed: ${e}`); }
+  };
+
+  const clearCompleted = async () => {
+    try {
+      const count = await invoke<number>("clear_completed_jobs");
+      toast.success(`Cleared ${count} job${count !== 1 ? "s" : ""}`);
+      loadJobs();
+    } catch (e) { toast.error(`Clear failed: ${e}`); }
+  };
+
+  const retryJob = async (job: Job) => {
+    try {
+      toast.info("Retrying...");
+      await invoke("process_video_file", { videoPath: job.source_video, gameId: job.game_id });
+      toast.success("Retry complete");
+      loadJobs();
+    } catch (e) { toast.error(`Retry failed: ${e}`); }
+  };
 
   const activeJobs = jobs.filter(j => !["done", "failed"].includes(j.status));
   const completedJobs = jobs.filter(j => j.status === "done");
@@ -55,17 +102,8 @@ export function ProcessingQueue() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={async () => {
-            try {
-              const file = await open({ multiple: false, filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "avi", "webm"] }] });
-              if (!file) return;
-              toast.info(`Processing: ${typeof file === "string" ? file.split(/[/\\]/).pop() : file}`);
-              await invoke("process_video_file", { videoPath: file, gameId: null });
-              toast.success("Processing complete");
-              loadJobs();
-            } catch (e) { toast.error(`Failed: ${e}`); }
-          }}>Process Video File</Button>
-          <Button variant="outline" onClick={() => toast.info("Configure watch folders in Settings > Clipper")}>Watch Folder</Button>
+          <Button onClick={processFile}>Process Video File</Button>
+          <Button variant="outline" onClick={() => navigate("/settings")}>Watch Folders</Button>
         </div>
       </div>
 
@@ -77,16 +115,14 @@ export function ProcessingQueue() {
               <CardContent className="py-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{job.game_id ?? "Unknown"}</Badge>
+                    {job.game_id && <Badge variant="outline">{job.game_id}</Badge>}
                     <span className="font-medium text-sm">{job.source_video.split(/[/\\]/).pop()}</span>
                   </div>
-                  <span className="text-xs text-muted-foreground">
-                    {job.clips_found} candidate{job.clips_found !== 1 ? "s" : ""} found
-                  </span>
+                  <span className="text-xs text-muted-foreground">{job.clips_found} candidate{job.clips_found !== 1 ? "s" : ""}</span>
                 </div>
                 <Progress value={job.progress * 100} />
                 <div className="flex items-center justify-between text-xs">
-                  <span className={statusColor(job.status)}>{stageLabel(job.status)}</span>
+                  <span className="text-blue-400">{stageLabel(job.status)}</span>
                   <span className="text-muted-foreground">{Math.round(job.progress * 100)}%</span>
                 </div>
               </CardContent>
@@ -95,7 +131,7 @@ export function ProcessingQueue() {
         </div>
       )}
 
-      {activeJobs.length === 0 && completedJobs.length === 0 && (
+      {activeJobs.length === 0 && completedJobs.length === 0 && failedJobs.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
             No processing jobs. Start a gaming session or drop a recording to process.
@@ -105,19 +141,22 @@ export function ProcessingQueue() {
 
       {completedJobs.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-muted-foreground">Completed</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-muted-foreground">Completed</h3>
+            <Button variant="ghost" size="sm" onClick={clearCompleted}>Clear All</Button>
+          </div>
           {completedJobs.map(job => (
             <Card key={job.id} className="bg-muted/30">
               <CardContent className="py-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{job.game_id ?? "Unknown"}</Badge>
+                    {job.game_id && <Badge variant="outline">{job.game_id}</Badge>}
                     <span className="text-sm">{job.source_video.split(/[/\\]/).pop()}</span>
                   </div>
-                  <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-xs">
                     <span className="text-green-400">{job.clips_found} clips</span>
-                    <span className="text-muted-foreground">{job.clips_approved} approved</span>
-                    <Button variant="ghost" size="sm">View Clips</Button>
+                    <Button variant="ghost" size="sm" onClick={() => navigate("/clips")}>View Clips</Button>
+                    <Button variant="ghost" size="sm" onClick={() => deleteJob(job.id)}>Remove</Button>
                   </div>
                 </div>
               </CardContent>
@@ -133,10 +172,13 @@ export function ProcessingQueue() {
             <Card key={job.id} className="border-red-500/20">
               <CardContent className="py-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm">{job.source_video.split(/[/\\]/).pop()}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-red-400">{job.error ?? "Unknown error"}</span>
-                    <Button variant="outline" size="sm">Retry</Button>
+                  <div>
+                    <span className="text-sm">{job.source_video.split(/[/\\]/).pop()}</span>
+                    <p className="text-xs text-red-400 mt-0.5">{job.error ?? "Unknown error"}</p>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button variant="outline" size="sm" onClick={() => retryJob(job)}>Retry</Button>
+                    <Button variant="ghost" size="sm" onClick={() => deleteJob(job.id)}>Remove</Button>
                   </div>
                 </div>
               </CardContent>
@@ -144,20 +186,6 @@ export function ProcessingQueue() {
           ))}
         </div>
       )}
-
-      <Card className="bg-muted/20 border-dashed">
-        <CardContent className="py-4">
-          <h4 className="text-sm font-medium mb-2">How detection works</h4>
-          <div className="grid grid-cols-3 gap-3 text-xs text-muted-foreground">
-            <div><span className="text-foreground font-medium">Audio peaks</span> — loud moments, reactions (librosa)</div>
-            <div><span className="text-foreground font-medium">Scene changes</span> — transitions, cuts (PySceneDetect)</div>
-            <div><span className="text-foreground font-medium">Speech</span> — words + timestamps (faster-whisper)</div>
-            <div><span className="text-foreground font-medium">Game events</span> — kills, deaths, HUD (YOLO v11)</div>
-            <div><span className="text-foreground font-medium">Screen text</span> — filters killcams (EasyOCR)</div>
-            <div><span className="text-foreground font-medium">Scene understanding</span> — what happened (Qwen2.5-VL)</div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

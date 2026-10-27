@@ -2079,6 +2079,209 @@ fn get_log_path(state: tauri::State<'_, AppState>) -> Result<String, String> {
     Ok(log_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn delete_processing_job(job_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let conn = state.db.conn()?;
+    conn.execute("DELETE FROM processing_jobs WHERE id = ?1", rusqlite::params![job_id])
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_completed_jobs(state: tauri::State<'_, AppState>) -> Result<u64, String> {
+    let conn = state.db.conn()?;
+    let count = conn.execute("DELETE FROM processing_jobs WHERE status IN ('done', 'failed')", [])
+        .map_err(|e| format!("DB error: {}", e))?;
+    Ok(count as u64)
+}
+
+#[tauri::command]
+async fn restart_sidecar_cmd() -> Result<(), String> {
+    let state = SIDECAR_STATE.get().ok_or("Sidecar not initialized")?;
+    clipper::sidecar::restart_sidecar(state).await
+}
+
+#[tauri::command]
+fn save_composition(clip_id: String, composition_json: String, recipe_id: Option<String>, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let conn = state.db.conn()?;
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT OR REPLACE INTO compositions (id, clip_id, recipe_id, composition_json, updated_at) VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+        rusqlite::params![id, clip_id, recipe_id, composition_json],
+    ).map_err(|e| format!("DB error: {}", e))?;
+    Ok(id)
+}
+
+#[tauri::command]
+fn load_composition(clip_id: String, state: tauri::State<'_, AppState>) -> Result<Option<serde_json::Value>, String> {
+    let conn = state.db.conn()?;
+    let result = conn.query_row(
+        "SELECT id, clip_id, recipe_id, composition_json, created_at, updated_at FROM compositions WHERE clip_id = ?1 ORDER BY updated_at DESC LIMIT 1",
+        rusqlite::params![clip_id],
+        |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?,
+                "clip_id": row.get::<_, String>(1)?,
+                "recipe_id": row.get::<_, Option<String>>(2)?,
+                "composition_json": row.get::<_, String>(3)?,
+                "created_at": row.get::<_, String>(4)?,
+                "updated_at": row.get::<_, String>(5)?,
+            }))
+        },
+    );
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("DB error: {}", e)),
+    }
+}
+
+#[tauri::command]
+fn get_clip_signals(clip_id: String, state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, signal_type, signal_value, signal_data, timestamp_ms FROM clip_signals WHERE clip_id = ?1 ORDER BY timestamp_ms"
+    ).map_err(|e| format!("DB error: {}", e))?;
+    let signals = stmt.query_map(rusqlite::params![clip_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "signal_type": row.get::<_, String>(1)?,
+            "signal_value": row.get::<_, f64>(2)?,
+            "signal_data": row.get::<_, Option<String>>(3)?,
+            "timestamp_ms": row.get::<_, i64>(4)?,
+        }))
+    }).map_err(|e| format!("Query error: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+    Ok(signals)
+}
+
+#[tauri::command]
+fn get_distribution_history(state: tauri::State<'_, AppState>) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT dl.id, dl.clip_id, dl.platform, dl.status, dl.scheduled_at, dl.posted_at, dl.engagement_data, c.title \
+         FROM distribution_log dl LEFT JOIN clips c ON c.id = dl.clip_id ORDER BY dl.posted_at DESC LIMIT 100"
+    ).map_err(|e| format!("DB error: {}", e))?;
+    let entries = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "clip_id": row.get::<_, String>(1)?,
+            "platform": row.get::<_, String>(2)?,
+            "status": row.get::<_, String>(3)?,
+            "scheduled_at": row.get::<_, Option<String>>(4)?,
+            "posted_at": row.get::<_, Option<String>>(5)?,
+            "engagement_data": row.get::<_, Option<String>>(6)?,
+            "clip_title": row.get::<_, Option<String>>(7)?,
+        }))
+    }).map_err(|e| format!("Query error: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+    Ok(entries)
+}
+
+#[tauri::command]
+async fn schedule_post(
+    clip_id: String,
+    platform: String,
+    scheduled_at: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let status = if scheduled_at.is_some() { "scheduled" } else { "pending" };
+    let conn = state.db.conn()?;
+    conn.execute(
+        "INSERT INTO distribution_log (id, clip_id, platform, status, scheduled_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![id, clip_id, platform, status, scheduled_at],
+    ).map_err(|e| format!("DB error: {}", e))?;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn export_clip(
+    video_path: String,
+    start_ms: i64,
+    end_ms: i64,
+    output_path: String,
+    vertical_crop: bool,
+    burn_captions: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let body = serde_json::json!({
+        "video_path": video_path,
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "output_path": output_path,
+        "vertical_crop": vertical_crop,
+        "burn_captions": burn_captions,
+    });
+    let sidecar_clone = sidecar.clone();
+    tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "POST", "/process", Some(body)).await
+    }).await.map_err(|e| format!("Task error: {}", e))?
+}
+
+#[tauri::command]
+async fn generate_thumbnails(video_path: String) -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let body = serde_json::json!({ "video_path": video_path });
+    let sidecar_clone = sidecar.clone();
+    tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "POST", "/thumbnail-strip", Some(body)).await
+    }).await.map_err(|e| format!("Task error: {}", e))?
+}
+
+#[tauri::command]
+async fn preview_effect(video_path: String, effect_type: String, preset: String) -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let body = serde_json::json!({ "video_path": video_path, "effect_type": effect_type, "preset": preset });
+    let sidecar_clone = sidecar.clone();
+    tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "POST", "/preview-effect", Some(body)).await
+    }).await.map_err(|e| format!("Task error: {}", e))?
+}
+
+#[tauri::command]
+async fn get_model_status() -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar_clone = sidecar.clone();
+    tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "GET", "/models", None).await
+    }).await.map_err(|e| format!("Task error: {}", e))?
+}
+
+#[tauri::command]
+async fn download_model(model_name: String) -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let body = serde_json::json!({ "model_name": model_name });
+    let sidecar_clone = sidecar.clone();
+    tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "POST", "/models/download", Some(body)).await
+    }).await.map_err(|e| format!("Task error: {}", e))?
+}
+
+#[tauri::command]
+async fn test_ollama(url: String) -> Result<serde_json::Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build().map_err(|e| e.to_string())?;
+    let resp = client.get(format!("{}/api/tags", url))
+        .send().await
+        .map_err(|e| format!("Cannot reach Ollama: {}", e))?;
+    resp.json::<serde_json::Value>().await
+        .map_err(|e| format!("Invalid response: {}", e))
+}
+
+#[tauri::command]
+async fn proxy_giphy(endpoint: String, query: String, api_key: String) -> Result<serde_json::Value, String> {
+    let url = format!("https://api.giphy.com/v1/{}?api_key={}&q={}&limit=20&rating=pg-13",
+        endpoint, api_key, urlencoding::encode(&query));
+    let client = reqwest::Client::new();
+    let resp = client.get(&url).send().await.map_err(|e| format!("GIPHY error: {}", e))?;
+    resp.json::<serde_json::Value>().await.map_err(|e| format!("Parse error: {}", e))
+}
+
 fn setup_file_logger(log_dir: &std::path::Path) {
     use std::fs::OpenOptions;
     use std::io::Write;
@@ -2157,9 +2360,9 @@ pub fn run() {
             let sidecar = std::sync::Arc::new(clipper::sidecar::SidecarState::new());
             SIDECAR_STATE.set(sidecar.clone()).ok();
             tauri::async_runtime::spawn(async move {
-                match clipper::sidecar::spawn_sidecar(&sidecar).await {
+                match clipper::sidecar::spawn_sidecar_with_retry(&sidecar).await {
                     Ok(()) => log::info!("Clipper sidecar started"),
-                    Err(e) => log::warn!("Clipper sidecar failed to start: {} (clipper features will be unavailable)", e),
+                    Err(e) => log::warn!("Clipper sidecar failed to start: {} (clipper features unavailable until manually restarted from Settings)", e),
                 }
             });
 
@@ -2260,6 +2463,21 @@ pub fn run() {
             get_processing_jobs,
             get_clipper_config,
             set_clipper_config,
+            delete_processing_job,
+            clear_completed_jobs,
+            restart_sidecar_cmd,
+            save_composition,
+            load_composition,
+            get_clip_signals,
+            get_distribution_history,
+            schedule_post,
+            export_clip,
+            generate_thumbnails,
+            preview_effect,
+            get_model_status,
+            download_model,
+            test_ollama,
+            proxy_giphy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

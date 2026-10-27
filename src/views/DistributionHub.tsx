@@ -1,106 +1,137 @@
-import { toast } from "sonner";
+import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 
-interface Platform {
+interface DistEntry {
   id: string;
-  name: string;
-  connected: boolean;
-  posts: number;
-  format: string;
+  clip_id: string;
+  platform: string;
+  status: string;
+  scheduled_at: string | null;
+  posted_at: string | null;
+  engagement_data: string | null;
+  clip_title: string | null;
 }
 
-const PLATFORMS: Platform[] = [
-  { id: "tiktok", name: "TikTok", connected: true, posts: 47, format: "9:16, 60s" },
-  { id: "youtube", name: "YouTube Shorts", connected: true, posts: 31, format: "9:16, 60s" },
-  { id: "instagram", name: "Instagram Reels", connected: true, posts: 22, format: "9:16, 90s" },
-  { id: "x", name: "X / Twitter", connected: false, posts: 0, format: "16:9, 140s" },
-  { id: "discord", name: "Discord", connected: true, posts: 85, format: "Any" },
-  { id: "reddit", name: "Reddit", connected: false, posts: 0, format: "16:9, 15min" },
-];
-
-const SCHEDULE = [
-  { day: "Mon", time: "12:00 PM", platform: "TikTok", clip: "Triple Kill - Valorant" },
-  { day: "Mon", time: "6:00 PM", platform: "YouTube Shorts", clip: "Ace - CS2" },
-  { day: "Tue", time: "12:00 PM", platform: "TikTok", clip: "Pentakill - League" },
-  { day: "Wed", time: "12:00 PM", platform: "TikTok", clip: "Squad Wipe - Apex" },
-  { day: "Thu", time: "12:00 PM", platform: "TikTok", clip: "Auto-selected" },
-  { day: "Fri", time: "12:00 PM", platform: "TikTok", clip: "Auto-selected" },
-];
-
-const TRENDING_TAGS = ["#gaming", "#valorantclips", "#clutch", "#ace", "#highlights", "#fyp", "#gamingmoments"];
-
 export function DistributionHub() {
+  const navigate = useNavigate();
+  const [history, setHistory] = useState<DistEntry[]>([]);
+  const [postizConfigured, setPostizConfigured] = useState(false);
+
+  const loadData = useCallback(async () => {
+    try {
+      const entries = await invoke<DistEntry[]>("get_distribution_history");
+      setHistory(entries);
+    } catch { setHistory([]); }
+
+    try {
+      const config = await invoke<Record<string, unknown>>("get_clipper_config");
+      const url = config?.postiz_url as string || "";
+      setPostizConfigured(url.length > 0 && url !== "https://api.postiz.com");
+    } catch {}
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const scheduled = history.filter(h => h.status === "scheduled");
+  const posted = history.filter(h => h.status === "posted");
+
+  const totalViews = posted.reduce((sum, p) => {
+    try { const d = JSON.parse(p.engagement_data || "{}"); return sum + (d.views || 0); } catch { return sum; }
+  }, 0);
+  const totalLikes = posted.reduce((sum, p) => {
+    try { const d = JSON.parse(p.engagement_data || "{}"); return sum + (d.likes || 0); } catch { return sum; }
+  }, 0);
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold tracking-tight">Posting</h2>
-        <p className="text-muted-foreground text-sm">Approved clips go out on schedule. Connect platforms and set the cadence.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Posting</h2>
+          <p className="text-muted-foreground text-sm">
+            {postizConfigured
+              ? "Connected to Postiz. Approved clips post on schedule."
+              : "Configure Postiz in Settings > Clipper to enable auto-posting."}
+          </p>
+        </div>
+        <Button variant="outline" onClick={() => navigate("/settings")}>Configure Postiz</Button>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <Card><CardContent className="pt-4"><div className="text-2xl font-bold">12.4k</div><div className="text-xs text-muted-foreground">Views this week</div></CardContent></Card>
-        <Card><CardContent className="pt-4"><div className="text-2xl font-bold text-green-400">843</div><div className="text-xs text-muted-foreground">Likes this week</div></CardContent></Card>
-        <Card><CardContent className="pt-4"><div className="text-2xl font-bold text-blue-400">3.2%</div><div className="text-xs text-muted-foreground">Avg engagement</div></CardContent></Card>
-      </div>
+      {posted.length > 0 && (
+        <div className="grid grid-cols-3 gap-4">
+          <Card><CardContent className="pt-4"><div className="text-2xl font-bold">{totalViews.toLocaleString()}</div><div className="text-xs text-muted-foreground">Total Views</div></CardContent></Card>
+          <Card><CardContent className="pt-4"><div className="text-2xl font-bold text-green-400">{totalLikes.toLocaleString()}</div><div className="text-xs text-muted-foreground">Total Likes</div></CardContent></Card>
+          <Card><CardContent className="pt-4"><div className="text-2xl font-bold text-blue-400">{posted.length}</div><div className="text-xs text-muted-foreground">Posts Published</div></CardContent></Card>
+        </div>
+      )}
 
-      <div>
-        <h3 className="text-sm font-semibold text-muted-foreground mb-3">Connected Platforms</h3>
-        <div className="grid grid-cols-3 gap-3">
-          {PLATFORMS.map(p => (
-            <Card key={p.id}>
+      {!postizConfigured && history.length === 0 && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground text-lg mb-2">No posts yet</p>
+            <p className="text-muted-foreground text-sm mb-4">
+              Connect Postiz to start auto-posting your approved clips to TikTok, YouTube Shorts, Instagram Reels, and more.
+            </p>
+            <Button onClick={() => navigate("/settings")}>Set Up Postiz</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {scheduled.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-muted-foreground">Scheduled</h3>
+          {scheduled.map(entry => (
+            <Card key={entry.id}>
               <CardContent className="py-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-sm">{p.name}</span>
-                  <Switch checked={p.connected} />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{entry.platform}</Badge>
+                    <span className="text-sm">{entry.clip_title ?? entry.clip_id}</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">{entry.scheduled_at ?? "Pending"}</span>
                 </div>
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  <div className="flex justify-between"><span>Posts</span><span className="text-foreground">{p.posts}</span></div>
-                  <div className="flex justify-between"><span>Format</span><span>{p.format}</span></div>
-                </div>
-                {!p.connected && <Button size="sm" className="w-full mt-2 text-xs" onClick={() => toast.info("Configure Postiz URL and API key in Settings > Clipper, then reconnect.")}>Connect via Postiz</Button>}
               </CardContent>
             </Card>
           ))}
         </div>
-      </div>
+      )}
 
-      <Separator />
-
-      <div>
-        <h3 className="text-sm font-semibold text-muted-foreground mb-3">Weekly Schedule</h3>
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr><th className="text-left px-3 py-2 text-xs font-medium">Day</th><th className="text-left px-3 py-2 text-xs font-medium">Time</th><th className="text-left px-3 py-2 text-xs font-medium">Platform</th><th className="text-left px-3 py-2 text-xs font-medium">Clip</th></tr>
-            </thead>
-            <tbody>
-              {SCHEDULE.map((s, i) => (
-                <tr key={i} className="border-t border-border/50">
-                  <td className="px-3 py-2 text-xs">{s.day}</td>
-                  <td className="px-3 py-2 text-xs">{s.time}</td>
-                  <td className="px-3 py-2 text-xs">{s.platform}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{s.clip}</td>
+      {posted.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-muted-foreground">Post History</h3>
+          <div className="rounded-lg border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="text-left px-3 py-2 text-xs font-medium">Clip</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium">Platform</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium">Posted</th>
+                  <th className="text-right px-3 py-2 text-xs font-medium">Views</th>
+                  <th className="text-right px-3 py-2 text-xs font-medium">Likes</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <Card className="bg-muted/20">
-        <CardHeader className="py-2"><CardTitle className="text-sm">Trending Now</CardTitle></CardHeader>
-        <CardContent className="pb-3">
-          <div className="flex gap-1.5 flex-wrap">
-            {TRENDING_TAGS.map(tag => (
-              <Badge key={tag} variant="outline" className="text-xs">{tag}</Badge>
-            ))}
+              </thead>
+              <tbody>
+                {posted.map(entry => {
+                  let views = 0, likes = 0;
+                  try { const d = JSON.parse(entry.engagement_data || "{}"); views = d.views || 0; likes = d.likes || 0; } catch {}
+                  return (
+                    <tr key={entry.id} className="border-t border-border/50">
+                      <td className="px-3 py-2 text-xs">{entry.clip_title ?? "Untitled"}</td>
+                      <td className="px-3 py-2 text-xs"><Badge variant="outline" className="text-xs">{entry.platform}</Badge></td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{entry.posted_at ?? "-"}</td>
+                      <td className="px-3 py-2 text-xs text-right">{views.toLocaleString()}</td>
+                      <td className="px-3 py-2 text-xs text-right">{likes.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -66,11 +67,13 @@ function parseRationale(raw: string | null): RationaleData | null {
 }
 
 export function ReviewQueue() {
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [clips, setClips] = useState<Clip[]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [mood, setMood] = useState<MoodKey>("viral");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
+  const [signals, setSignals] = useState<Array<{ signal_type: string; signal_value: number }>>([]);
 
   const loadPending = useCallback(async () => {
     try {
@@ -82,6 +85,21 @@ export function ReviewQueue() {
   }, []);
 
   useEffect(() => { loadPending(); }, [loadPending]);
+
+  useEffect(() => {
+    const clip = clips[currentIdx];
+    if (!clip) { setSignals([]); return; }
+    invoke<Array<Record<string, unknown>>>("get_clip_signals", { clipId: clip.id })
+      .then(s => {
+        const grouped: Record<string, number> = {};
+        for (const sig of s) {
+          const t = sig.signal_type as string;
+          grouped[t] = Math.max(grouped[t] ?? 0, sig.signal_value as number);
+        }
+        setSignals(Object.entries(grouped).map(([signal_type, signal_value]) => ({ signal_type, signal_value })));
+      })
+      .catch(() => setSignals([]));
+  }, [currentIdx, clips]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -180,11 +198,19 @@ export function ReviewQueue() {
         <div className="space-y-4">
           <Card>
             <CardContent className="pt-4">
-              <div className="aspect-video bg-muted rounded-lg flex items-center justify-center mb-4">
-                <span className="text-muted-foreground text-sm">
-                  {clip.game_id ?? "Unknown"} - {clip.title ?? "Untitled"} ({clip.duration_ms ? `${(clip.duration_ms / 1000).toFixed(0)}s` : ""})
-                </span>
-              </div>
+              {(clip.clip_path || clip.source_video) ? (
+                <video
+                  ref={videoRef}
+                  src={`file://${clip.clip_path || clip.source_video}`}
+                  controls
+                  className="w-full rounded-lg mb-4"
+                  style={{ maxHeight: 300, background: "#000" }}
+                />
+              ) : (
+                <div className="aspect-video bg-muted rounded-lg flex items-center justify-center mb-4">
+                  <span className="text-muted-foreground text-sm">No video file available</span>
+                </div>
+              )}
 
               <div className="flex gap-2 justify-center">
                 <Button variant="outline" onClick={() => handleAction("reject")}>Reject (J)</Button>
@@ -259,7 +285,12 @@ export function ReviewQueue() {
                   <Button variant="ghost" size="sm" className="text-xs h-6" onClick={() => setFeedbackOpen(!feedbackOpen)}>
                     I disagree
                   </Button>
-                  <Button variant="ghost" size="sm" className="text-xs h-6">Agree</Button>
+                  <Button variant="ghost" size="sm" className="text-xs h-6" onClick={async () => {
+                    try {
+                      await invoke("submit_clip_feedback", { feedbackJson: JSON.stringify({ id: crypto.randomUUID(), clip_id: clip.id, action: "approve", rating: null, rationale_agreed: true, written_reason: null }) });
+                      toast.success("Feedback: agreed with rationale");
+                    } catch {}
+                  }}>Agree</Button>
                 </div>
                 {feedbackOpen && (
                   <div className="space-y-2">
@@ -270,7 +301,14 @@ export function ReviewQueue() {
                       onChange={e => setFeedbackText(e.target.value)}
                     />
                     <div className="flex gap-1">
-                      <Button size="sm" className="text-xs h-6" onClick={() => handleAction("reject")}>Submit</Button>
+                      <Button size="sm" className="text-xs h-6" onClick={async () => {
+                        try {
+                          await invoke("submit_clip_feedback", { feedbackJson: JSON.stringify({ id: crypto.randomUUID(), clip_id: clip.id, action: "reject", rating: null, rationale_agreed: false, written_reason: feedbackText }) });
+                          toast.success("Feedback submitted");
+                          setFeedbackOpen(false);
+                          setFeedbackText("");
+                        } catch (e) { toast.error(`Failed: ${e}`); }
+                      }}>Submit Feedback</Button>
                       <Button variant="ghost" size="sm" className="text-xs h-6" onClick={() => setFeedbackOpen(false)}>Cancel</Button>
                     </div>
                   </div>
@@ -284,12 +322,11 @@ export function ReviewQueue() {
               <CardTitle className="text-xs">Signal Breakdown</CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 space-y-1.5">
-              <SignalBar label="YOLO" value={0.35} />
-              <SignalBar label="VLM" value={0.30} />
-              <SignalBar label="Audio" value={0.15} />
-              <SignalBar label="Scene" value={0.10} />
-              <SignalBar label="Whisper" value={0.05} />
-              <SignalBar label="Trend" value={0.05} />
+              {signals.length > 0 ? signals.map(s => (
+                <SignalBar key={s.signal_type} label={s.signal_type} value={s.signal_value} />
+              )) : (
+                <p className="text-xs text-muted-foreground">No signal data available</p>
+              )}
             </CardContent>
           </Card>
 

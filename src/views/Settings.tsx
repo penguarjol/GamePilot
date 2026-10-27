@@ -312,6 +312,82 @@ export function Settings() {
               />
             </div>
           </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-medium">GIPHY API Key</p>
+            <p className="text-xs text-muted-foreground mb-2">For GIF/sticker browser in the editor (free at developers.giphy.com)</p>
+            <input
+              type="text"
+              className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5"
+              placeholder="Your GIPHY beta API key"
+              onBlur={async (e) => {
+                if (!e.target.value) return;
+                try {
+                  await invoke("set_clipper_config", { key: "giphy_api_key", value: e.target.value });
+                  toast.success("GIPHY API key saved");
+                } catch (err) { toast.error(`Failed: ${err}`); }
+              }}
+            />
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">ScrapeBadger API Key</p>
+            <p className="text-xs text-muted-foreground mb-2">For TikTok trending sounds (scrapebadger.com)</p>
+            <input
+              type="text"
+              className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5"
+              placeholder="Your ScrapeBadger API key"
+              onBlur={async (e) => {
+                if (!e.target.value) return;
+                try {
+                  await invoke("set_clipper_config", { key: "scrapebadger_api_key", value: e.target.value });
+                  toast.success("ScrapeBadger API key saved");
+                } catch (err) { toast.error(`Failed: ${err}`); }
+              }}
+            />
+          </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-medium">ML Models</p>
+            <p className="text-xs text-muted-foreground mb-2">Download models for detection and scoring</p>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                const result = await invoke<Record<string, unknown>>("get_model_status");
+                const models = (result.models as Array<Record<string, string>>) || [];
+                const summary = models.map(m => `${m.name}: ${m.status} (${m.size})`).join("\n");
+                toast.success(`Models:\n${summary || "None loaded"}`);
+              } catch (e) {
+                toast.error(`Cannot check models (sidecar may not be running): ${e}`);
+              }
+            }}>Check Model Status</Button>
+            <Button variant="outline" size="sm" className="ml-2" onClick={async () => {
+              try {
+                toast.info("Downloading Whisper large-v3 (this may take several minutes)...");
+                await invoke("download_model", { modelName: "faster-whisper-large-v3" });
+                toast.success("Whisper model downloaded");
+              } catch (e) {
+                toast.error(`Download failed: ${e}`);
+              }
+            }}>Download Whisper</Button>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">Restart Sidecar</p>
+            <p className="text-xs text-muted-foreground mb-2">Manually restart the ML processing engine</p>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                toast.info("Restarting sidecar...");
+                await invoke("restart_sidecar_cmd");
+                toast.success("Sidecar restarted");
+              } catch (e) {
+                toast.error(`Restart failed: ${e}`);
+              }
+            }}>Restart Sidecar</Button>
+          </div>
         </CardContent>
       </Card>
 

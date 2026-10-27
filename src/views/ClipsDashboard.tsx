@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +55,7 @@ function ConfidenceBar({ value, threshold = 0.8 }: { value: number; threshold?: 
 }
 
 export function ClipsDashboard() {
+  const navigate = useNavigate();
   const [clips, setClips] = useState<Clip[]>([]);
   const [gameFilter, setGameFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -182,7 +184,7 @@ export function ClipsDashboard() {
           </Card>
         )}
         {sortedClips.map(clip => (
-          <Card key={clip.id} className="cursor-pointer hover:bg-muted/50 transition-colors">
+          <Card key={clip.id} className="cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => navigate(`/editor?clipId=${clip.id}`)}>
             <CardContent className="py-4">
               <div className="flex items-start gap-4">
                 <div className="flex-1 min-w-0">

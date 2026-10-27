@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,12 +17,14 @@ pub struct SidecarStatus {
     pub pid: Option<u32>,
     pub version: Option<String>,
     pub uptime_s: Option<f64>,
+    pub last_error: Option<String>,
 }
 
 pub struct SidecarState {
     handshake: Mutex<Option<SidecarHandshake>>,
     shutting_down: AtomicBool,
     child_pid: Mutex<Option<u32>>,
+    last_error: Mutex<Option<String>>,
 }
 
 impl SidecarState {
@@ -32,6 +33,7 @@ impl SidecarState {
             handshake: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
             child_pid: Mutex::new(None),
+            last_error: Mutex::new(None),
         }
     }
 
@@ -47,6 +49,7 @@ impl SidecarState {
 
     pub async fn status(&self) -> SidecarStatus {
         let hs = self.handshake.lock().await;
+        let err = self.last_error.lock().await;
         match hs.as_ref() {
             Some(h) => SidecarStatus {
                 running: true,
@@ -54,6 +57,7 @@ impl SidecarState {
                 pid: Some(h.pid),
                 version: Some(h.version.clone()),
                 uptime_s: None,
+                last_error: None,
             },
             None => SidecarStatus {
                 running: false,
@@ -61,6 +65,7 @@ impl SidecarState {
                 pid: None,
                 version: None,
                 uptime_s: None,
+                last_error: err.clone(),
             },
         }
     }
@@ -74,7 +79,33 @@ impl SidecarState {
     }
 }
 
-pub async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {
+pub async fn spawn_sidecar_with_retry(state: &SidecarState) -> Result<(), String> {
+    let max_attempts = 3;
+    let mut last_err = String::new();
+
+    for attempt in 1..=max_attempts {
+        log::info!("Sidecar spawn attempt {}/{}", attempt, max_attempts);
+        match spawn_sidecar(state).await {
+            Ok(()) => {
+                *state.last_error.lock().await = None;
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = e.clone();
+                log::warn!("Sidecar attempt {} failed: {}", attempt, e);
+                *state.last_error.lock().await = Some(e);
+                if attempt < max_attempts {
+                    let delay = std::time::Duration::from_millis(500 * (1 << attempt));
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+
+    Err(format!("Sidecar failed after {} attempts: {}", max_attempts, last_err))
+}
+
+async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {
     use std::process::Stdio;
     use tokio::io::AsyncBufReadExt;
     use tokio::process::Command;
@@ -84,21 +115,19 @@ pub async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {
 
     let (program, script_arg) = find_sidecar_binary()?;
 
+    log::info!("Sidecar binary: {} {:?}", program, script_arg);
+
     let mut cmd = Command::new(&program);
     if let Some(script) = &script_arg {
         cmd.arg(script);
     }
     let mut child = cmd
-        .args([
-            "--port", "0",
-            "--token", &token,
-            "--parent-pid", &parent_pid.to_string(),
-        ])
+        .args(["--port", "0", "--token", &token, "--parent-pid", &parent_pid.to_string()])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
+        .map_err(|e| format!("Failed to spawn '{}': {}", program, e))?;
 
     let pid = child.id().unwrap_or(0);
     *state.child_pid.lock().await = Some(pid);
@@ -116,12 +145,9 @@ pub async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {
     .ok_or("Sidecar closed stdout before handshake")?;
 
     let handshake: SidecarHandshake = serde_json::from_str(&handshake_line)
-        .map_err(|e| format!("Invalid handshake JSON: {} — got: {}", e, handshake_line))?;
+        .map_err(|e| format!("Invalid handshake JSON: {} (got: {})", e, &handshake_line[..handshake_line.len().min(200)]))?;
 
-    log::info!(
-        "Sidecar started: port={}, pid={}, version={}",
-        handshake.port, handshake.pid, handshake.version
-    );
+    log::info!("Sidecar started: port={}, pid={}, version={}", handshake.port, handshake.pid, handshake.version);
 
     poll_health(&handshake, 10).await?;
 
@@ -140,9 +166,9 @@ async fn poll_health(handshake: &SidecarHandshake, max_attempts: u32) -> Result<
     let client = reqwest::Client::new();
 
     for attempt in 1..=max_attempts {
-        match client.get(&url).send().await {
+        match client.get(&url).timeout(std::time::Duration::from_secs(3)).send().await {
             Ok(resp) if resp.status().is_success() => {
-                log::info!("Sidecar health check passed on attempt {}", attempt);
+                log::info!("Sidecar health OK on attempt {}", attempt);
                 return Ok(());
             }
             _ => {
@@ -151,7 +177,7 @@ async fn poll_health(handshake: &SidecarHandshake, max_attempts: u32) -> Result<
         }
     }
 
-    Err(format!("Sidecar health check failed after {} attempts", max_attempts))
+    Err(format!("Sidecar health check failed after {} attempts on port {}", max_attempts, handshake.port))
 }
 
 pub async fn stop_sidecar(state: &SidecarState) {
@@ -159,22 +185,24 @@ pub async fn stop_sidecar(state: &SidecarState) {
     if let Some(pid) = state.child_pid.lock().await.take() {
         #[cfg(unix)]
         {
-            let _ = std::process::Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
-                .output();
+            let _ = std::process::Command::new("kill").args(["-TERM", &pid.to_string()]).output();
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
+            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
         }
         #[cfg(windows)]
         {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .output();
+            let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).output();
         }
     }
     *state.handshake.lock().await = None;
+    state.shutting_down.store(false, Ordering::SeqCst);
+}
+
+pub async fn restart_sidecar(state: &SidecarState) -> Result<(), String> {
+    log::info!("Restarting sidecar...");
+    stop_sidecar(state).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    spawn_sidecar_with_retry(state).await
 }
 
 fn find_sidecar_binary() -> Result<(String, Option<String>), String> {
@@ -198,10 +226,7 @@ fn find_sidecar_binary() -> Result<(String, Option<String>), String> {
         }
     }
 
-    let dev_candidates = [
-        "sidecar/api.py",
-        "../sidecar/api.py",
-    ];
+    let dev_candidates = ["sidecar/api.py", "../sidecar/api.py"];
     for candidate in &dev_candidates {
         let path = std::path::Path::new(candidate);
         if path.exists() {
@@ -209,7 +234,7 @@ fn find_sidecar_binary() -> Result<(String, Option<String>), String> {
         }
     }
 
-    Err("Clipper sidecar not found. In dev mode, run from project root. In production, the sidecar should be bundled.".to_string())
+    Err("Clipper sidecar not found. In dev: run from project root with Python deps installed. In production: the sidecar binary should be bundled.".to_string())
 }
 
 pub async fn sidecar_request(
@@ -218,12 +243,15 @@ pub async fn sidecar_request(
     path: &str,
     body: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    let base_url = state.base_url().await
-        .ok_or("Sidecar not running")?;
+    let base_url = state.base_url().await.ok_or("Sidecar not running")?;
     let token = state.token().await.unwrap_or_default();
     let url = format!("{}{}", base_url, path);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
     let req = match method {
         "GET" => client.get(&url),
         "POST" => client.post(&url),
@@ -231,14 +259,9 @@ pub async fn sidecar_request(
     };
 
     let req = req.header("Authorization", &token);
-    let req = if let Some(b) = body {
-        req.json(&b)
-    } else {
-        req
-    };
+    let req = if let Some(b) = body { req.json(&b) } else { req };
 
-    let resp = req.send().await
-        .map_err(|e| format!("Sidecar request failed: {}", e))?;
+    let resp = req.send().await.map_err(|e| format!("Sidecar request failed: {}", e))?;
 
     if !resp.status().is_success() {
         let status = resp.status();

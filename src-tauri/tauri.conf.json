@@ -38,7 +38,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.modrinth.com https://cdn.modrinth.com https://github.com https://api.github.com https://127.0.0.1:2999 http://127.0.0.1:* https://api.giphy.com https://api.postiz.com; img-src 'self' https://cdn.modrinth.com https://media.giphy.com https://media*.giphy.com"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://api.modrinth.com https://cdn.modrinth.com https://github.com https://api.github.com https://127.0.0.1:* http://127.0.0.1:* http://localhost:* https://api.giphy.com https://api.postiz.com https://scrapebadger.com; img-src 'self' https://cdn.modrinth.com https://media.giphy.com https://media*.giphy.com data:; media-src 'self' blob: http://127.0.0.1:* http://localhost:*"
     }
   },
   "bundle": {

@@ -182,6 +182,134 @@ async def transcribe(req: TranscribeRequest):
     return TranscribeResponse(**result)
 
 
+# ── Export ───────────────────────────────────────────────────────────────────
+
+class ExportRequest(BaseModel):
+    video_path: str
+    start_ms: int
+    end_ms: int
+    output_path: Optional[str] = None
+    format: str = "mp4"
+    vertical_crop: bool = False
+    burn_captions: bool = False
+
+
+@app.post("/export", dependencies=[Depends(verify_token)])
+async def export_clip(req: ExportRequest):
+    from processing.clip import extract_clip
+
+    result = await extract_clip(
+        video_path=req.video_path,
+        start_ms=req.start_ms,
+        end_ms=req.end_ms,
+        output_path=req.output_path,
+        fmt=req.format,
+        vertical_crop=req.vertical_crop,
+        burn_captions=req.burn_captions,
+    )
+    return result
+
+
+# ── Thumbnails ───────────────────────────────────────────────────────────────
+
+class ThumbnailRequest(BaseModel):
+    video_path: str
+    fps: float = 1.0
+    thumb_width: int = 160
+    columns: int = 10
+
+
+@app.post("/thumbnail-strip", dependencies=[Depends(verify_token)])
+async def thumbnail_strip(req: ThumbnailRequest):
+    import asyncio
+    from pathlib import Path
+
+    video = Path(req.video_path)
+    output = video.parent / f"{video.stem}_sprites.jpg"
+
+    def _generate():
+        from processing.effects import generate_sprite_sheet
+        return generate_sprite_sheet(
+            str(video), str(output),
+            fps=req.fps, thumb_width=req.thumb_width, columns=req.columns,
+        )
+
+    result_path = await asyncio.to_thread(_generate)
+    return {"sprite_sheet": result_path, "thumb_width": req.thumb_width, "columns": req.columns}
+
+
+# ── Preview Effect ───────────────────────────────────────────────────────────
+
+class PreviewEffectRequest(BaseModel):
+    video_path: str
+    effect_type: str
+    preset: str
+    duration_s: float = 5.0
+
+
+@app.post("/preview-effect", dependencies=[Depends(verify_token)])
+async def preview_effect_endpoint(req: PreviewEffectRequest):
+    import asyncio
+    import tempfile
+    from pathlib import Path
+
+    output = Path(tempfile.mktemp(suffix=".mp4"))
+
+    def _render():
+        if req.effect_type == "voice_mod":
+            from processing.effects import apply_voice_mod
+            return apply_voice_mod(req.video_path, str(output), req.preset)
+        elif req.effect_type == "speed":
+            from processing.effects import apply_speed_change
+            return apply_speed_change(req.video_path, str(output), 0, req.duration_s, float(req.preset))
+        else:
+            return str(output)
+
+    result_path = await asyncio.to_thread(_render)
+    return {"preview_path": result_path}
+
+
+# ── Models ───────────────────────────────────────────────────────────────────
+
+@app.get("/models", dependencies=[Depends(verify_token)])
+async def list_models():
+    from pathlib import Path
+
+    models_dir = Path(__file__).parent / "models"
+    models = []
+
+    whisper_cache = Path.home() / ".cache" / "huggingface" / "hub"
+    whisper_ready = any(whisper_cache.glob("models--Systran--faster-whisper*")) if whisper_cache.exists() else False
+    models.append({"name": "faster-whisper-large-v3", "status": "ready" if whisper_ready else "not_downloaded", "size": "3.1 GB"})
+
+    for pt_file in models_dir.glob("*.pt"):
+        models.append({"name": pt_file.stem, "status": "ready", "size": f"{pt_file.stat().st_size / 1e6:.0f} MB"})
+
+    for onnx_file in models_dir.glob("*.onnx"):
+        models.append({"name": onnx_file.stem, "status": "ready", "size": f"{onnx_file.stat().st_size / 1e6:.0f} MB"})
+
+    return {"models": models}
+
+
+class ModelDownloadRequest(BaseModel):
+    model_name: str
+
+
+@app.post("/models/download", dependencies=[Depends(verify_token)])
+async def download_model_endpoint(req: ModelDownloadRequest):
+    import asyncio
+
+    if req.model_name == "faster-whisper-large-v3":
+        def _download():
+            from faster_whisper import WhisperModel
+            WhisperModel("large-v3", device="cpu", compute_type="int8")
+            return "ok"
+        await asyncio.to_thread(_download)
+        return {"status": "downloaded", "model": req.model_name}
+
+    return {"status": "unknown_model", "model": req.model_name}
+
+
 # ── Entrypoint ───────────────────────────────────────────────────────────────
 
 def main():

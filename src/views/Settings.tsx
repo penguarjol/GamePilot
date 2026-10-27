@@ -178,6 +178,143 @@ export function Settings() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
 
+      {/* Clipper */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Clipper</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Sidecar Status</p>
+              <p className="text-xs text-muted-foreground">
+                The ML processing engine that detects highlights
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={async () => {
+              try {
+                const status = await invoke<Record<string, unknown>>("get_sidecar_status");
+                if (status.running) {
+                  toast.success(`Sidecar running on port ${status.port} (PID ${status.pid})`);
+                } else {
+                  toast.error("Sidecar is not running. Check the log file for errors.");
+                }
+              } catch (e) {
+                toast.error(`Could not check sidecar: ${e}`);
+              }
+            }}>Check Status</Button>
+          </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-medium">Ollama URL</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              Local Ollama instance for AI scoring rationale (Qwen3-8B)
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
+                defaultValue="http://localhost:11434"
+                onBlur={async (e) => {
+                  try {
+                    await invoke("set_clipper_config", { key: "ollama_url", value: e.target.value });
+                    toast.success("Ollama URL saved");
+                  } catch (err) {
+                    toast.error(`Failed to save: ${err}`);
+                  }
+                }}
+              />
+              <Button variant="outline" size="sm" onClick={async () => {
+                try {
+                  const resp = await fetch("http://localhost:11434/api/tags");
+                  if (resp.ok) {
+                    const data = await resp.json();
+                    const models = (data.models || []).map((m: Record<string, string>) => m.name).join(", ");
+                    toast.success(`Ollama connected. Models: ${models || "none"}`);
+                  } else {
+                    toast.error("Ollama responded but returned an error");
+                  }
+                } catch {
+                  toast.error("Cannot reach Ollama at localhost:11434. Is it running?");
+                }
+              }}>Test Connection</Button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Install Ollama from ollama.com, then run: ollama pull qwen3:8b
+            </p>
+          </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-medium">Watch Folders</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              Folders monitored for new recordings after each session
+            </p>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex items-center justify-between bg-muted/50 rounded px-3 py-1.5">
+                <span className="text-muted-foreground">C:\Medal\</span>
+                <Badge variant="outline" className="text-xs">Medal.tv</Badge>
+              </div>
+            </div>
+            <Button variant="outline" size="sm" className="mt-2" onClick={async () => {
+              try {
+                const folder = await (await import("@tauri-apps/plugin-dialog")).open({ directory: true });
+                if (folder) {
+                  toast.success(`Watch folder added: ${folder}`);
+                  await invoke("set_clipper_config", { key: "watch_folders", value: JSON.stringify([folder]) });
+                }
+              } catch (e) {
+                toast.error(`Failed: ${e}`);
+              }
+            }}>Add Folder</Button>
+          </div>
+
+          <Separator />
+
+          <div>
+            <p className="text-sm font-medium">Postiz URL</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              Self-hosted social media scheduler for auto-posting clips
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
+                defaultValue="https://api.postiz.com"
+                placeholder="https://your-postiz-instance.com"
+                onBlur={async (e) => {
+                  try {
+                    await invoke("set_clipper_config", { key: "postiz_url", value: e.target.value });
+                    toast.success("Postiz URL saved");
+                  } catch (err) { toast.error(`Failed: ${err}`); }
+                }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">Postiz API Key</p>
+            <div className="flex gap-2 mt-1">
+              <input
+                type="password"
+                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
+                placeholder="Your Postiz API key"
+                onBlur={async (e) => {
+                  if (!e.target.value) return;
+                  try {
+                    await invoke("set_clipper_config", { key: "postiz_api_key", value: e.target.value });
+                    toast.success("Postiz API key saved");
+                  } catch (err) { toast.error(`Failed: ${err}`); }
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Appearance */}
       <Card>
         <CardHeader>

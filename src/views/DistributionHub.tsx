@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -60,7 +61,7 @@ export function DistributionHub() {
                   <div className="flex justify-between"><span>Posts</span><span className="text-foreground">{p.posts}</span></div>
                   <div className="flex justify-between"><span>Format</span><span>{p.format}</span></div>
                 </div>
-                {!p.connected && <Button size="sm" className="w-full mt-2 text-xs">Connect via Postiz</Button>}
+                {!p.connected && <Button size="sm" className="w-full mt-2 text-xs" onClick={() => toast.info("Configure Postiz URL and API key in Settings > Clipper, then reconnect.")}>Connect via Postiz</Button>}
               </CardContent>
             </Card>
           ))}

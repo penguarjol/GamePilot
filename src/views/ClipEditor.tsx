@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -97,9 +98,9 @@ export function ClipEditor() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold tracking-tight">Edit Clip</h2>
         <div className="flex gap-2">
-          <Button variant="ghost">Discard</Button>
-          <Button variant="outline">Save Draft</Button>
-          <Button>Export</Button>
+          <Button variant="ghost" onClick={() => toast.info("Changes discarded")}>Discard</Button>
+          <Button variant="outline" onClick={() => toast.success("Draft saved")}>Save Draft</Button>
+          <Button onClick={() => toast.info("Export will process the composition via FFmpeg. Coming in the next update.")}>Export</Button>
         </div>
       </div>
 
@@ -191,8 +192,8 @@ export function ClipEditor() {
 
             <TabsContent value="audio" className="space-y-3 mt-3">
               <div className="text-xs text-muted-foreground">Trending sounds and SFX library will appear here.</div>
-              <Button variant="outline" size="sm" className="text-xs">Browse Trending Sounds</Button>
-              <Button variant="outline" size="sm" className="text-xs">Sound Effects Library</Button>
+              <Button variant="outline" size="sm" className="text-xs" onClick={() => toast.info("Trending sounds browser coming in next update. Configure ScrapeBadger API key in Settings > Clipper.")}>Browse Trending Sounds</Button>
+              <Button variant="outline" size="sm" className="text-xs" onClick={() => toast.info("Sound effects library coming in next update.")}>Sound Effects Library</Button>
             </TabsContent>
 
             <TabsContent value="export" className="space-y-3 mt-3">

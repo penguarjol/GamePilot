@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
 import type { Clip } from "@/types";
 
 const MOOD_KEYS = ["skill", "funny", "montage", "viral"] as const;
@@ -90,7 +92,21 @@ export function ClipsDashboard() {
             {clips.length} clips found. {pending} waiting for review.
           </p>
         </div>
-        <Button>Process New Video</Button>
+        <Button onClick={async () => {
+          try {
+            const file = await open({
+              multiple: false,
+              filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "avi", "webm"] }],
+            });
+            if (!file) return;
+            toast.info(`Processing: ${typeof file === "string" ? file.split(/[/\\]/).pop() : file}`);
+            const result = await invoke("process_video_file", { videoPath: file, gameId: null });
+            toast.success(`Done! Found ${(result as Record<string, unknown>).candidates ?? 0} clip candidates.`);
+            loadClips();
+          } catch (e) {
+            toast.error(`Processing failed: ${e}`);
+          }
+        }}>Process New Video</Button>
       </div>
 
       <div className="grid grid-cols-4 gap-4">

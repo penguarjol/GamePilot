@@ -1958,6 +1958,120 @@ async fn get_sidecar_status() -> Result<clipper::sidecar::SidecarStatus, String>
 }
 
 #[tauri::command]
+async fn process_video_file(
+    video_path: String,
+    game_id: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let sidecar = SIDECAR_STATE.get().ok_or("Clipper sidecar not running. Check Settings > Clipper for status.")?;
+
+    let job_id = uuid::Uuid::new_v4().to_string();
+
+    {
+        let conn = state.db.conn()?;
+        conn.execute(
+            "INSERT INTO processing_jobs (id, source_video, game_id, status) VALUES (?1, ?2, ?3, 'detecting')",
+            rusqlite::params![job_id, video_path, game_id],
+        ).map_err(|e| format!("DB error: {}", e))?;
+    }
+
+    let body = serde_json::json!({
+        "video_path": video_path,
+        "game_id": game_id,
+        "signals": ["audio", "scene", "whisper"],
+    });
+
+    let job_id_clone = job_id.clone();
+    let sidecar_clone = sidecar.clone();
+    let result = tokio::task::spawn(async move {
+        clipper::sidecar::sidecar_request(&sidecar_clone, "POST", "/detect", Some(body)).await
+    }).await.map_err(|e| format!("Task error: {}", e))??;
+
+    let candidates = result.get("candidates").and_then(|c| c.as_array()).map(|a| a.len()).unwrap_or(0);
+
+    {
+        let conn = state.db.conn()?;
+        conn.execute(
+            "UPDATE processing_jobs SET status = 'done', clips_found = ?1, completed_at = datetime('now') WHERE id = ?2",
+            rusqlite::params![candidates as i64, job_id_clone],
+        ).map_err(|e| format!("DB error: {}", e))?;
+    }
+
+    Ok(serde_json::json!({
+        "job_id": job_id,
+        "candidates": candidates,
+        "result": result,
+    }))
+}
+
+#[tauri::command]
+async fn get_processing_jobs(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let conn = state.db.conn()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, source_video, game_id, status, progress, clips_found, clips_approved, error, started_at, completed_at, created_at \
+         FROM processing_jobs ORDER BY created_at DESC LIMIT 50"
+    ).map_err(|e| format!("DB error: {}", e))?;
+
+    let jobs = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "source_video": row.get::<_, String>(1)?,
+            "game_id": row.get::<_, Option<String>>(2)?,
+            "status": row.get::<_, String>(3)?,
+            "progress": row.get::<_, f64>(4)?,
+            "clips_found": row.get::<_, i64>(5)?,
+            "clips_approved": row.get::<_, i64>(6)?,
+            "error": row.get::<_, Option<String>>(7)?,
+            "started_at": row.get::<_, Option<String>>(8)?,
+            "completed_at": row.get::<_, Option<String>>(9)?,
+            "created_at": row.get::<_, String>(10)?,
+        }))
+    }).map_err(|e| format!("Query error: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(jobs)
+}
+
+#[tauri::command]
+fn get_clipper_config(
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
+    let conn = state.db.conn()?;
+
+    let ollama_url: String = conn.query_row(
+        "SELECT value FROM user_preferences WHERE key = 'ollama_url'",
+        [], |row| row.get(0),
+    ).unwrap_or_else(|_| "http://localhost:11434".to_string());
+
+    let watch_folders: String = conn.query_row(
+        "SELECT watch_folders FROM recording_config WHERE id = 'default'",
+        [], |row| row.get(0),
+    ).unwrap_or_else(|_| "[]".to_string());
+
+    Ok(serde_json::json!({
+        "ollama_url": ollama_url,
+        "watch_folders": serde_json::from_str::<serde_json::Value>(&watch_folders).unwrap_or(serde_json::json!([])),
+    }))
+}
+
+#[tauri::command]
+fn set_clipper_config(
+    key: String,
+    value: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.conn()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO user_preferences (key, value, updated_at) VALUES (?1, ?2, datetime('now'))",
+        rusqlite::params![key, value],
+    ).map_err(|e| format!("DB error: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_log_path(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let dir = state.app_handle.path().app_data_dir()
         .map_err(|e| format!("Path error: {}", e))?;
@@ -2142,6 +2256,10 @@ pub fn run() {
             get_mood_profiles,
             get_sidecar_status,
             get_log_path,
+            process_video_file,
+            get_processing_jobs,
+            get_clipper_config,
+            set_clipper_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +30,16 @@ function statusColor(status: string): string {
 }
 
 export function ProcessingQueue() {
-  const [jobs] = useState<ProcessingJob[]>([]);
+  const [jobs, setJobs] = useState<ProcessingJob[]>([]);
+
+  const loadJobs = useCallback(async () => {
+    try {
+      const result = await invoke<ProcessingJob[]>("get_processing_jobs");
+      setJobs(result as unknown as ProcessingJob[]);
+    } catch { setJobs([]); }
+  }, []);
+
+  useEffect(() => { loadJobs(); const i = setInterval(loadJobs, 5000); return () => clearInterval(i); }, [loadJobs]);
 
   const activeJobs = jobs.filter(j => !["done", "failed"].includes(j.status));
   const completedJobs = jobs.filter(j => j.status === "done");
@@ -43,8 +55,17 @@ export function ProcessingQueue() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button>Process Video File</Button>
-          <Button variant="outline">Watch Folder</Button>
+          <Button onClick={async () => {
+            try {
+              const file = await open({ multiple: false, filters: [{ name: "Video", extensions: ["mp4", "mkv", "mov", "avi", "webm"] }] });
+              if (!file) return;
+              toast.info(`Processing: ${typeof file === "string" ? file.split(/[/\\]/).pop() : file}`);
+              await invoke("process_video_file", { videoPath: file, gameId: null });
+              toast.success("Processing complete");
+              loadJobs();
+            } catch (e) { toast.error(`Failed: ${e}`); }
+          }}>Process Video File</Button>
+          <Button variant="outline" onClick={() => toast.info("Configure watch folders in Settings > Clipper")}>Watch Folder</Button>
         </div>
       </div>
 

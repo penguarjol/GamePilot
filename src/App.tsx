@@ -34,11 +34,16 @@ function App() {
   const runScan = useCallback(async () => {
     setScanning(true);
     try {
-      const [hw, disc] = await Promise.all([
-        invoke<HardwareInfo>("get_hardware_info"),
-        invoke<DiscoveredInstance[]>("discover_all_instances"),
-      ]);
+      // Hardware info first (fast)
+      const hw = await invoke<HardwareInfo>("get_hardware_info");
       setHwInfo(hw);
+
+      // Instance discovery can be slow — run with a timeout so the wizard doesn't freeze
+      const discoverWithTimeout = Promise.race([
+        invoke<DiscoveredInstance[]>("discover_all_instances"),
+        new Promise<DiscoveredInstance[]>((resolve) => setTimeout(() => resolve([]), 10000)),
+      ]);
+      const disc = await discoverWithTimeout;
       setInstances(disc);
     } catch {
       // Scan errors are non-fatal during onboarding

@@ -21,10 +21,10 @@ pub struct SidecarStatus {
 }
 
 pub struct SidecarState {
-    handshake: Mutex<Option<SidecarHandshake>>,
+    pub handshake: Mutex<Option<SidecarHandshake>>,
     shutting_down: AtomicBool,
     child_pid: Mutex<Option<u32>>,
-    last_error: Mutex<Option<String>>,
+    pub last_error: Mutex<Option<String>>,
 }
 
 impl SidecarState {
@@ -80,7 +80,15 @@ impl SidecarState {
 }
 
 pub async fn spawn_sidecar_with_retry(state: &SidecarState) -> Result<(), String> {
-    let max_attempts = 3;
+    // First: check if a sidecar is already running on common ports
+    for port in [8017, 8018, 8019, 8020] {
+        if let Ok(()) = try_connect_existing(state, port).await {
+            log::info!("Connected to existing sidecar on port {}", port);
+            return Ok(());
+        }
+    }
+
+    let max_attempts = 2;
     let mut last_err = String::new();
 
     for attempt in 1..=max_attempts {
@@ -95,14 +103,37 @@ pub async fn spawn_sidecar_with_retry(state: &SidecarState) -> Result<(), String
                 log::warn!("Sidecar attempt {} failed: {}", attempt, e);
                 *state.last_error.lock().await = Some(e);
                 if attempt < max_attempts {
-                    let delay = std::time::Duration::from_millis(500 * (1 << attempt));
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             }
         }
     }
 
-    Err(format!("Sidecar failed after {} attempts: {}", max_attempts, last_err))
+    let msg = format!("Sidecar not available: {}. Start it manually or check Settings > Clipper.", last_err);
+    *state.last_error.lock().await = Some(msg.clone());
+    Err(msg)
+}
+
+async fn try_connect_existing(state: &SidecarState, port: u16) -> Result<(), String> {
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build().map_err(|e| e.to_string())?;
+
+    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err("Health check failed".to_string());
+    }
+
+    let handshake = SidecarHandshake {
+        port,
+        token: String::new(),
+        pid: 0,
+        version: "external".to_string(),
+    };
+    *state.handshake.lock().await = Some(handshake);
+    *state.last_error.lock().await = None;
+    Ok(())
 }
 
 async fn spawn_sidecar(state: &SidecarState) -> Result<(), String> {

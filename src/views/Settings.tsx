@@ -376,17 +376,41 @@ export function Settings() {
           </div>
 
           <div>
-            <p className="text-sm font-medium">Restart Sidecar</p>
-            <p className="text-xs text-muted-foreground mb-2">Manually restart the ML processing engine</p>
-            <Button variant="outline" size="sm" onClick={async () => {
-              try {
-                toast.info("Restarting sidecar...");
-                await invoke("restart_sidecar_cmd");
-                toast.success("Sidecar restarted");
-              } catch (e) {
-                toast.error(`Restart failed: ${e}`);
-              }
-            }}>Restart Sidecar</Button>
+            <p className="text-sm font-medium">Sidecar Management</p>
+            <p className="text-xs text-muted-foreground mb-2">
+              If the sidecar was started manually, enter the port to connect. Otherwise use Restart to auto-start it.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={async () => {
+                try {
+                  toast.info("Restarting sidecar...");
+                  await invoke("restart_sidecar_cmd");
+                  toast.success("Sidecar restarted");
+                } catch (e) {
+                  toast.error(`Restart failed: ${e}`);
+                }
+              }}>Restart Sidecar</Button>
+              <input
+                type="number"
+                className="w-24 text-sm bg-muted border border-border rounded px-2 py-1"
+                placeholder="Port"
+                id="sidecar-port-input"
+              />
+              <Button variant="outline" size="sm" onClick={async () => {
+                const portEl = document.getElementById("sidecar-port-input") as HTMLInputElement;
+                const port = parseInt(portEl?.value || "0", 10);
+                if (!port || port < 1024 || port > 65535) {
+                  toast.error("Enter a valid port (1024-65535)");
+                  return;
+                }
+                try {
+                  await invoke("connect_sidecar", { port });
+                  toast.success(`Connected to sidecar on port ${port}`);
+                } catch (e) {
+                  toast.error(`Connect failed: ${e}`);
+                }
+              }}>Connect</Button>
+            </div>
           </div>
         </CardContent>
       </Card>

@@ -2102,6 +2102,30 @@ async fn restart_sidecar_cmd() -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn connect_sidecar(port: u16) -> Result<(), String> {
+    let state = SIDECAR_STATE.get().ok_or("Sidecar not initialized")?;
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build().map_err(|e| e.to_string())?;
+    let resp = client.get(&url).send().await
+        .map_err(|_| format!("Cannot reach sidecar on port {}", port))?;
+    if !resp.status().is_success() {
+        return Err(format!("Sidecar on port {} returned {}", port, resp.status()));
+    }
+    let handshake = clipper::sidecar::SidecarHandshake {
+        port,
+        token: String::new(),
+        pid: 0,
+        version: "manual".to_string(),
+    };
+    *state.handshake.lock().await = Some(handshake);
+    *state.last_error.lock().await = None;
+    log::info!("Manually connected to sidecar on port {}", port);
+    Ok(())
+}
+
+#[tauri::command]
 fn save_composition(clip_id: String, composition_json: String, recipe_id: Option<String>, state: tauri::State<'_, AppState>) -> Result<String, String> {
     let conn = state.db.conn()?;
     let id = uuid::Uuid::new_v4().to_string();
@@ -2473,6 +2497,7 @@ pub fn run() {
             delete_processing_job,
             clear_completed_jobs,
             restart_sidecar_cmd,
+            connect_sidecar,
             save_composition,
             load_composition,
             get_clip_signals,

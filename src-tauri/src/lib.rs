@@ -2288,13 +2288,14 @@ fn setup_file_logger(log_dir: &std::path::Path) {
 
     let log_path = log_dir.join("gamepilot.log");
 
-    let target = Box::new(
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .expect("Failed to open log file"),
-    );
+    let file = match OpenOptions::new().create(true).append(true).open(&log_path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Cannot open log file {}: {}. Logging to stderr.", log_path.display(), e);
+            return;
+        }
+    };
+    let target = Box::new(file);
 
     env_logger::Builder::from_default_env()
         .filter_level(log::LevelFilter::Info)
@@ -2339,23 +2340,29 @@ pub fn run() {
             let db = Database::open(&db_path).expect("Failed to open database");
             let handle = app.handle().clone();
 
-            let hw = hardware::collect_hardware_info();
-            let device_id = {
-                use sha2::Digest;
-                let mut hasher = sha2::Sha256::new();
-                hasher.update(hw.hostname.as_bytes());
-                hasher.update(hw.cpu_model.as_bytes());
-                format!("dev-{}", hex::encode(&hasher.finalize()[..8]))
-            };
-            if let Ok(conn) = db.conn() {
-                conn.execute(
-                    "INSERT OR REPLACE INTO devices (id, hostname, os_name, os_version, cpu_model, cpu_cores, cpu_threads, gpu_model, gpu_vram_mb, ram_total_mb, updated_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
-                    rusqlite::params![device_id, hw.hostname, hw.os_name, hw.os_version, hw.cpu_model, hw.cpu_cores, hw.cpu_threads, hw.gpu_model, hw.gpu_vram_mb, hw.ram_total_mb],
-                ).ok();
-            }
+            app.manage(AppState { db, app_handle: handle.clone() });
 
-            app.manage(AppState { db, app_handle: handle });
+            // Hardware registration runs off the main thread so the window renders immediately
+            let db_for_hw = Database::open(&db_path).ok();
+            std::thread::spawn(move || {
+                let hw = hardware::collect_hardware_info();
+                let device_id = {
+                    use sha2::Digest;
+                    let mut hasher = sha2::Sha256::new();
+                    hasher.update(hw.hostname.as_bytes());
+                    hasher.update(hw.cpu_model.as_bytes());
+                    format!("dev-{}", hex::encode(&hasher.finalize()[..8]))
+                };
+                if let Some(db) = db_for_hw {
+                    if let Ok(conn) = db.conn() {
+                        conn.execute(
+                            "INSERT OR REPLACE INTO devices (id, hostname, os_name, os_version, cpu_model, cpu_cores, cpu_threads, gpu_model, gpu_vram_mb, ram_total_mb, updated_at) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
+                            rusqlite::params![device_id, hw.hostname, hw.os_name, hw.os_version, hw.cpu_model, hw.cpu_cores, hw.cpu_threads, hw.gpu_model, hw.gpu_vram_mb, hw.ram_total_mb],
+                        ).ok();
+                    }
+                }
+            });
 
             let sidecar = std::sync::Arc::new(clipper::sidecar::SidecarState::new());
             SIDECAR_STATE.set(sidecar.clone()).ok();

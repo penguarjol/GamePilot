@@ -1953,7 +1953,7 @@ fn get_mood_profiles() -> Vec<clipper::scoring::MoodProfile> {
 
 #[tauri::command]
 async fn get_sidecar_status() -> Result<clipper::sidecar::SidecarStatus, String> {
-    let state = SIDECAR_STATE.get().ok_or("Sidecar not initialized")?;
+    let state = SIDECAR_STATE.get().ok_or("Clip processing is initializing. Try again in a moment.")?;
     Ok(state.status().await)
 }
 
@@ -1963,7 +1963,7 @@ async fn process_video_file(
     game_id: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Clipper sidecar not running. Check Settings > Clipper for status.")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing is starting up. Try again in a moment, or check Settings if the issue persists.")?;
 
     let job_id = uuid::Uuid::new_v4().to_string();
 
@@ -2097,13 +2097,13 @@ fn clear_completed_jobs(state: tauri::State<'_, AppState>) -> Result<u64, String
 
 #[tauri::command]
 async fn restart_sidecar_cmd() -> Result<(), String> {
-    let state = SIDECAR_STATE.get().ok_or("Sidecar not initialized")?;
+    let state = SIDECAR_STATE.get().ok_or("Clip processing is initializing. Try again in a moment.")?;
     clipper::sidecar::restart_sidecar(state).await
 }
 
 #[tauri::command]
 async fn connect_sidecar(port: u16) -> Result<(), String> {
-    let state = SIDECAR_STATE.get().ok_or("Sidecar not initialized")?;
+    let state = SIDECAR_STATE.get().ok_or("Clip processing is initializing. Try again in a moment.")?;
     let url = format!("http://127.0.0.1:{}/health", port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
@@ -2231,7 +2231,7 @@ async fn export_clip(
     burn_captions: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing unavailable. Check Settings for status.")?;
     let body = serde_json::json!({
         "video_path": video_path,
         "start_ms": start_ms,
@@ -2248,7 +2248,7 @@ async fn export_clip(
 
 #[tauri::command]
 async fn generate_thumbnails(video_path: String) -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing unavailable. Check Settings for status.")?;
     let body = serde_json::json!({ "video_path": video_path });
     let sidecar_clone = sidecar.clone();
     tokio::task::spawn(async move {
@@ -2258,7 +2258,7 @@ async fn generate_thumbnails(video_path: String) -> Result<serde_json::Value, St
 
 #[tauri::command]
 async fn preview_effect(video_path: String, effect_type: String, preset: String) -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing unavailable. Check Settings for status.")?;
     let body = serde_json::json!({ "video_path": video_path, "effect_type": effect_type, "preset": preset });
     let sidecar_clone = sidecar.clone();
     tokio::task::spawn(async move {
@@ -2268,7 +2268,7 @@ async fn preview_effect(video_path: String, effect_type: String, preset: String)
 
 #[tauri::command]
 async fn get_model_status() -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing unavailable. Check Settings for status.")?;
     let sidecar_clone = sidecar.clone();
     tokio::task::spawn(async move {
         clipper::sidecar::sidecar_request(&sidecar_clone, "GET", "/models", None).await
@@ -2277,7 +2277,7 @@ async fn get_model_status() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 async fn download_model(model_name: String) -> Result<serde_json::Value, String> {
-    let sidecar = SIDECAR_STATE.get().ok_or("Sidecar not running")?;
+    let sidecar = SIDECAR_STATE.get().ok_or("Clip processing unavailable. Check Settings for status.")?;
     let body = serde_json::json!({ "model_name": model_name });
     let sidecar_clone = sidecar.clone();
     tokio::task::spawn(async move {

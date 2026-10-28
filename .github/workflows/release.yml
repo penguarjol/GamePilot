@@ -38,12 +38,14 @@ jobs:
 
       - name: Install Python sidecar dependencies
         run: |
-          cd sidecar
-          pip install -r requirements.txt
+          pip install -r sidecar/requirements.txt
           pip install pyinstaller
 
       - name: Build sidecar binary
-        run: python sidecar/build.py
+        run: |
+          python sidecar/build.py
+          Write-Host "Sidecar binary size:"
+          Get-ChildItem src-tauri/binaries/clipper-sidecar* | Format-Table Name, Length
 
       - name: Download FFmpeg
         run: |

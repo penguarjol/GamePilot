@@ -1,5 +1,44 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+
+function ClipProcessingStatus() {
+  const [status, setStatus] = useState<"checking" | "active" | "unavailable">("checking");
+
+  const check = useCallback(async () => {
+    try {
+      const s = await invoke<Record<string, unknown>>("get_sidecar_status");
+      setStatus(s.running ? "active" : "unavailable");
+    } catch {
+      setStatus("unavailable");
+    }
+  }, []);
+
+  useEffect(() => { check(); const i = setInterval(check, 15000); return () => clearInterval(i); }, [check]);
+
+  return (
+    <div className="flex items-center justify-between">
+      <div>
+        <p className="text-sm font-medium">Clip Processing Engine</p>
+        <p className="text-xs text-muted-foreground">Detects highlights, scores clips, and renders exports</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className={`w-2 h-2 rounded-full ${status === "active" ? "bg-green-500" : status === "unavailable" ? "bg-red-500" : "bg-yellow-500"}`} />
+        <span className="text-xs text-muted-foreground">
+          {status === "active" ? "Active" : status === "unavailable" ? "Unavailable" : "Checking..."}
+        </span>
+        {status === "unavailable" && (
+          <button className="text-xs text-primary hover:underline" onClick={async () => {
+            try {
+              setStatus("checking");
+              await invoke("restart_sidecar_cmd");
+              setTimeout(check, 2000);
+            } catch { setStatus("unavailable"); }
+          }}>Retry</button>
+        )}
+      </div>
+    </div>
+  );
+}
 import { getVersion } from "@tauri-apps/api/app";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
@@ -181,235 +220,68 @@ export function Settings() {
       {/* Clipper */}
       <Card>
         <CardHeader>
-          <CardTitle>Clipper</CardTitle>
+          <CardTitle>Clip Processing</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Sidecar Status</p>
-              <p className="text-xs text-muted-foreground">
-                The ML processing engine that detects highlights
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={async () => {
-              try {
-                const status = await invoke<Record<string, unknown>>("get_sidecar_status");
-                if (status.running) {
-                  toast.success(`Sidecar running on port ${status.port} (PID ${status.pid})`);
-                } else {
-                  toast.error("Sidecar is not running. Check the log file for errors.");
-                }
-              } catch (e) {
-                toast.error(`Could not check sidecar: ${e}`);
-              }
-            }}>Check Status</Button>
-          </div>
+          <ClipProcessingStatus />
 
           <Separator />
 
           <div>
-            <p className="text-sm font-medium">Ollama URL</p>
+            <p className="text-sm font-medium">Ollama (AI Scoring)</p>
             <p className="text-xs text-muted-foreground mb-2">
-              Local Ollama instance for AI scoring rationale (Qwen3-8B)
+              Provides written rationale for why clips scored the way they did.
+              Install from ollama.com, then run: ollama pull qwen3:8b
             </p>
             <div className="flex gap-2">
-              <input
-                type="text"
-                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
-                defaultValue="http://localhost:11434"
-                onBlur={async (e) => {
-                  try {
-                    await invoke("set_clipper_config", { key: "ollama_url", value: e.target.value });
-                    toast.success("Ollama URL saved");
-                  } catch (err) {
-                    toast.error(`Failed to save: ${err}`);
-                  }
-                }}
-              />
+              <input type="text" className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5" defaultValue="http://localhost:11434"
+                onBlur={async (e) => { try { await invoke("set_clipper_config", { key: "ollama_url", value: e.target.value }); } catch {} }} />
               <Button variant="outline" size="sm" onClick={async () => {
                 try {
-                  const resp = await fetch("http://localhost:11434/api/tags");
-                  if (resp.ok) {
-                    const data = await resp.json();
-                    const models = (data.models || []).map((m: Record<string, string>) => m.name).join(", ");
-                    toast.success(`Ollama connected. Models: ${models || "none"}`);
-                  } else {
-                    toast.error("Ollama responded but returned an error");
-                  }
-                } catch {
-                  toast.error("Cannot reach Ollama at localhost:11434. Is it running?");
-                }
-              }}>Test Connection</Button>
+                  const result = await invoke<Record<string, unknown>>("test_ollama", { url: "http://localhost:11434" });
+                  const models = ((result.models || []) as Array<Record<string, string>>).map(m => m.name).join(", ");
+                  toast.success(`Ollama connected. Models: ${models || "none installed"}`);
+                } catch (e) { toast.error(`Cannot reach Ollama: ${e}`); }
+              }}>Test</Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              Install Ollama from ollama.com, then run: ollama pull qwen3:8b
-            </p>
           </div>
 
           <Separator />
 
           <div>
             <p className="text-sm font-medium">Watch Folders</p>
-            <p className="text-xs text-muted-foreground mb-2">
-              Folders monitored for new recordings after each session
-            </p>
-            <div className="space-y-1.5 text-sm">
-              <div className="flex items-center justify-between bg-muted/50 rounded px-3 py-1.5">
-                <span className="text-muted-foreground">C:\Medal\</span>
-                <Badge variant="outline" className="text-xs">Medal.tv</Badge>
-              </div>
-            </div>
-            <Button variant="outline" size="sm" className="mt-2" onClick={async () => {
+            <p className="text-xs text-muted-foreground mb-2">Folders monitored for new recordings after each session</p>
+            <Button variant="outline" size="sm" onClick={async () => {
               try {
                 const folder = await (await import("@tauri-apps/plugin-dialog")).open({ directory: true });
-                if (folder) {
-                  toast.success(`Watch folder added: ${folder}`);
-                  await invoke("set_clipper_config", { key: "watch_folders", value: JSON.stringify([folder]) });
-                }
-              } catch (e) {
-                toast.error(`Failed: ${e}`);
-              }
+                if (folder) { await invoke("set_clipper_config", { key: "watch_folders", value: JSON.stringify([folder]) }); toast.success(`Watch folder added: ${folder}`); }
+              } catch (e) { toast.error(`Failed: ${e}`); }
             }}>Add Folder</Button>
           </div>
 
           <Separator />
 
           <div>
-            <p className="text-sm font-medium">Postiz URL</p>
-            <p className="text-xs text-muted-foreground mb-2">
-              Self-hosted social media scheduler for auto-posting clips
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
-                defaultValue="https://api.postiz.com"
-                placeholder="https://your-postiz-instance.com"
-                onBlur={async (e) => {
-                  try {
-                    await invoke("set_clipper_config", { key: "postiz_url", value: e.target.value });
-                    toast.success("Postiz URL saved");
-                  } catch (err) { toast.error(`Failed: ${err}`); }
-                }}
-              />
-            </div>
-          </div>
-
-          <div>
-            <p className="text-sm font-medium">Postiz API Key</p>
-            <div className="flex gap-2 mt-1">
-              <input
-                type="password"
-                className="flex-1 text-sm bg-muted border border-border rounded px-3 py-1.5"
-                placeholder="Your Postiz API key"
-                onBlur={async (e) => {
-                  if (!e.target.value) return;
-                  try {
-                    await invoke("set_clipper_config", { key: "postiz_api_key", value: e.target.value });
-                    toast.success("Postiz API key saved");
-                  } catch (err) { toast.error(`Failed: ${err}`); }
-                }}
-              />
+            <p className="text-sm font-medium">Social Posting (Postiz)</p>
+            <p className="text-xs text-muted-foreground mb-2">Auto-post clips to TikTok, YouTube Shorts, Instagram, and more</p>
+            <div className="space-y-2">
+              <input type="text" className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5" placeholder="Postiz instance URL"
+                defaultValue="https://api.postiz.com" onBlur={async (e) => { try { await invoke("set_clipper_config", { key: "postiz_url", value: e.target.value }); toast.success("Saved"); } catch {} }} />
+              <input type="password" className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5" placeholder="Postiz API key"
+                onBlur={async (e) => { if (!e.target.value) return; try { await invoke("set_clipper_config", { key: "postiz_api_key", value: e.target.value }); toast.success("Saved"); } catch {} }} />
             </div>
           </div>
 
           <Separator />
 
           <div>
-            <p className="text-sm font-medium">GIPHY API Key</p>
-            <p className="text-xs text-muted-foreground mb-2">For GIF/sticker browser in the editor (free at developers.giphy.com)</p>
-            <input
-              type="text"
-              className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5"
-              placeholder="Your GIPHY beta API key"
-              onBlur={async (e) => {
-                if (!e.target.value) return;
-                try {
-                  await invoke("set_clipper_config", { key: "giphy_api_key", value: e.target.value });
-                  toast.success("GIPHY API key saved");
-                } catch (err) { toast.error(`Failed: ${err}`); }
-              }}
-            />
-          </div>
-
-          <div>
-            <p className="text-sm font-medium">ScrapeBadger API Key</p>
-            <p className="text-xs text-muted-foreground mb-2">For TikTok trending sounds (scrapebadger.com)</p>
-            <input
-              type="text"
-              className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5"
-              placeholder="Your ScrapeBadger API key"
-              onBlur={async (e) => {
-                if (!e.target.value) return;
-                try {
-                  await invoke("set_clipper_config", { key: "scrapebadger_api_key", value: e.target.value });
-                  toast.success("ScrapeBadger API key saved");
-                } catch (err) { toast.error(`Failed: ${err}`); }
-              }}
-            />
-          </div>
-
-          <Separator />
-
-          <div>
-            <p className="text-sm font-medium">ML Models</p>
-            <p className="text-xs text-muted-foreground mb-2">Download models for detection and scoring</p>
-            <Button variant="outline" size="sm" onClick={async () => {
-              try {
-                const result = await invoke<Record<string, unknown>>("get_model_status");
-                const models = (result.models as Array<Record<string, string>>) || [];
-                const summary = models.map(m => `${m.name}: ${m.status} (${m.size})`).join("\n");
-                toast.success(`Models:\n${summary || "None loaded"}`);
-              } catch (e) {
-                toast.error(`Cannot check models (sidecar may not be running): ${e}`);
-              }
-            }}>Check Model Status</Button>
-            <Button variant="outline" size="sm" className="ml-2" onClick={async () => {
-              try {
-                toast.info("Downloading Whisper large-v3 (this may take several minutes)...");
-                await invoke("download_model", { modelName: "faster-whisper-large-v3" });
-                toast.success("Whisper model downloaded");
-              } catch (e) {
-                toast.error(`Download failed: ${e}`);
-              }
-            }}>Download Whisper</Button>
-          </div>
-
-          <div>
-            <p className="text-sm font-medium">Sidecar Management</p>
-            <p className="text-xs text-muted-foreground mb-2">
-              If the sidecar was started manually, enter the port to connect. Otherwise use Restart to auto-start it.
-            </p>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={async () => {
-                try {
-                  toast.info("Restarting sidecar...");
-                  await invoke("restart_sidecar_cmd");
-                  toast.success("Sidecar restarted");
-                } catch (e) {
-                  toast.error(`Restart failed: ${e}`);
-                }
-              }}>Restart Sidecar</Button>
-              <input
-                type="number"
-                className="w-24 text-sm bg-muted border border-border rounded px-2 py-1"
-                placeholder="Port"
-                id="sidecar-port-input"
-              />
-              <Button variant="outline" size="sm" onClick={async () => {
-                const portEl = document.getElementById("sidecar-port-input") as HTMLInputElement;
-                const port = parseInt(portEl?.value || "0", 10);
-                if (!port || port < 1024 || port > 65535) {
-                  toast.error("Enter a valid port (1024-65535)");
-                  return;
-                }
-                try {
-                  await invoke("connect_sidecar", { port });
-                  toast.success(`Connected to sidecar on port ${port}`);
-                } catch (e) {
-                  toast.error(`Connect failed: ${e}`);
-                }
-              }}>Connect</Button>
+            <p className="text-sm font-medium">API Keys (Optional)</p>
+            <p className="text-xs text-muted-foreground mb-2">For trending sounds and GIF browser in the editor</p>
+            <div className="space-y-2">
+              <input type="text" className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5" placeholder="GIPHY API key (free at developers.giphy.com)"
+                onBlur={async (e) => { if (!e.target.value) return; try { await invoke("set_clipper_config", { key: "giphy_api_key", value: e.target.value }); toast.success("Saved"); } catch {} }} />
+              <input type="text" className="w-full text-sm bg-muted border border-border rounded px-3 py-1.5" placeholder="ScrapeBadger API key (for TikTok trending sounds)"
+                onBlur={async (e) => { if (!e.target.value) return; try { await invoke("set_clipper_config", { key: "scrapebadger_api_key", value: e.target.value }); toast.success("Saved"); } catch {} }} />
             </div>
           </div>
         </CardContent>
